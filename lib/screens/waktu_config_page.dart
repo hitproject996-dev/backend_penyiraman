@@ -561,8 +561,11 @@ class _WaktuConfigPageState extends State<WaktuConfigPage> {
 
   Future<void> _handleSaveOrUpdate() async {
     try {
+      print('🔧 [DEBUG] Starting save configuration...');
+
       // Save to local storage
       await KontrolStorage.saveWaktuConfig(widget.potName, _jadwalPenyiraman);
+      print('✅ [DEBUG] Local storage saved');
 
       // Convert durasi to seconds untuk Firebase
       final durasi1Detik = _convertToSeconds(
@@ -574,14 +577,20 @@ class _WaktuConfigPageState extends State<WaktuConfigPage> {
         _jadwalPenyiraman[1]['durasiUnit'],
       );
 
-      // Update Firebase dengan konfigurasi waktu
-      await _dbService.updateKontrolConfig({
+      final configData = {
         'waktu_1': _jadwalPenyiraman[0]['jamMulai'],
         'waktu_2': _jadwalPenyiraman[1]['jamMulai'],
         'durasi_1': durasi1Detik,
         'durasi_2': durasi2Detik,
         'waktu': _isWaktuModeActive,
-      });
+      };
+
+      print('📊 [DEBUG] Config to Firebase: $configData');
+
+      // Update Firebase dengan konfigurasi waktu
+      await _dbService.updateKontrolConfig(configData);
+
+      print('✅ [DEBUG] Firebase config saved successfully');
 
       setState(() {
         _isSaved = true;
@@ -600,7 +609,11 @@ class _WaktuConfigPageState extends State<WaktuConfigPage> {
 
       // Start automation jika mode aktif
       if (_isWaktuModeActive) {
+        print('🚀 [DEBUG] Starting Waktu Mode automation...');
         _automationService.startWaktuMode();
+        print('✅ [DEBUG] Waktu Mode started');
+      } else {
+        print('⏹️ [DEBUG] Waktu Mode is disabled - not starting automation');
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(

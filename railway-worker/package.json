@@ -6,6 +6,9 @@
   "scripts": {
     "start": "node worker.js",
     "dev": "nodemon worker.js",
+    "debug": "node debug.js",
+    "test:firebase": "node test-firebase-direct.js",
+    "setup": "node extract-credentials.js",
     "test": "echo \"No tests yet\" && exit 0"
   },
   "keywords": ["iot", "automation", "firebase", "worker"],

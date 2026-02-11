@@ -161,9 +161,11 @@ class FirebaseDatabaseService {
   /// Update kontrol configuration
   Future<void> updateKontrolConfig(Map<String, dynamic> config) async {
     try {
+      print('🔥 [DEBUG] Updating Firebase kontrol config: $config');
       await _database.child('kontrol').update(config);
+      print('✅ [DEBUG] Firebase kontrol config updated successfully');
     } catch (e) {
-      print('Error updating kontrol config: $e');
+      print('❌ [DEBUG] Error updating kontrol config: $e');
       rethrow;
     }
   }

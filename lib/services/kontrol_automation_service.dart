@@ -25,8 +25,8 @@ class KontrolAutomationService {
   bool _isSensorModeActive = false;
 
   // State untuk mencegah trigger berulang
-  Map<String, DateTime> _lastWateringTime = {};
-  Map<String, bool> _isWateringActive = {};
+  final Map<String, DateTime> _lastWateringTime = {};
+  final Map<String, bool> _isWateringActive = {};
 
   // ==================== KONTROL WAKTU ====================
 
