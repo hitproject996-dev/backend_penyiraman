@@ -1,0 +1,110 @@
+{
+  "aktuator": {
+    "mosvet_1": false,
+    "mosvet_2": false,
+    "mosvet_3": false,
+    "mosvet_4": false,
+    "mosvet_5": false,
+    "mosvet_6": false,
+    "mosvet_7": false,
+    "mosvet_8": false
+  },
+  
+  "data": {
+    "pot_1": {
+      "kelembaban": 50,
+      "suhu": 28,
+      "timestamp": 1708070400000
+    },
+    "pot_2": {
+      "kelembaban": 45,
+      "suhu": 27,
+      "timestamp": 1708070400000
+    },
+    "pot_3": {
+      "kelembaban": 52,
+      "suhu": 29,
+      "timestamp": 1708070400000
+    },
+    "pot_4": {
+      "kelembaban": 48,
+      "suhu": 28,
+      "timestamp": 1708070400000
+    },
+    "pot_5": {
+      "kelembaban": 51,
+      "suhu": 27,
+      "timestamp": 1708070400000
+    }
+  },
+  
+  "history": {
+    "2026-02-16": {
+      "log_1": {
+        "timestamp": 1708070400000,
+        "type": "waktu_jadwal_1",
+        "pots": [1, 2, 3],
+        "durasi": 60,
+        "pompa_air": true,
+        "pompa_pupuk": false
+      }
+    }
+  },
+  
+  "kontrol": {
+    "waktu": true,
+    "sensor": false,
+    "otomatis": true,
+    
+    "batas_atas": 32,
+    "batas_bawah": 11,
+    
+    "mode_sensor": "smart",
+    "durasi_sensor": 600,
+    
+    "jadwal_1": {
+      "aktif": true,
+      "waktu": "08:00",
+      "durasi": 60,
+      "pot_aktif": [1, 2, 3],
+      "pompa_air": true,
+      "pompa_pupuk": false
+    },
+    
+    "jadwal_2": {
+      "aktif": true,
+      "waktu": "09:00",
+      "durasi": 45,
+      "pot_aktif": [4, 5],
+      "pompa_air": true,
+      "pompa_pupuk": true
+    },
+    
+    "jadwal_3": {
+      "aktif": true,
+      "waktu": "16:00",
+      "durasi": 30,
+      "pot_aktif": [1, 2, 3, 4, 5],
+      "pompa_air": true,
+      "pompa_pupuk": true
+    },
+    
+    "jadwal_4": {
+      "aktif": false,
+      "waktu": "12:00",
+      "durasi": 40,
+      "pot_aktif": [2, 4],
+      "pompa_air": true,
+      "pompa_pupuk": false
+    },
+    
+    "jadwal_5": {
+      "aktif": false,
+      "waktu": "18:00",
+      "durasi": 50,
+      "pot_aktif": [1, 5],
+      "pompa_air": true,
+      "pompa_pupuk": false
+    }
+  }
+}

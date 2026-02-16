@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_color.dart';
 import '../widgets/kontrol_widgets.dart';
 import 'pot_selection_page.dart';
+import 'jadwal_management_page.dart';
 import '../services/kontrol_storage.dart';
 import '../services/firebase_database_service.dart';
 
@@ -69,9 +70,7 @@ class _KontrolPageState extends State<KontrolPage> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder:
-                                (context) =>
-                                    const PotSelectionPage(mode: 'Waktu'),
+                            builder: (context) => const JadwalManagementPage(),
                           ),
                         );
                       },

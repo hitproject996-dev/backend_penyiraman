@@ -40,6 +40,14 @@ const cron = require('cron');
 // Set timezone untuk Indonesia (UTC+7)
 process.env.TZ = process.env.TZ || 'Asia/Jakarta';
 
+// Firebase paths configuration
+const FIREBASE_PATHS = {
+  kontrol: 'kontrol_1',  // Main kontrol path (ubah ke 'kontrol' jika perlu)
+  aktuator: 'aktuator',
+  data: 'data',
+  history: 'history',
+};
+
 const config = {
   redis: {
     host: process.env.REDIS_HOST || 'localhost',
@@ -62,9 +70,10 @@ const config = {
 
 console.log('🚀 Starting ApsGo Railway Worker...');
 console.log(`📡 Firebase Project: ${config.firebase.projectId}`);
-console.log(`� Firebase DB URL: ${config.firebase.databaseURL}`);
-console.log(`�📦 Redis: ${config.redis.host}:${config.redis.port}`);
+console.log(`🔥 Firebase DB URL: ${config.firebase.databaseURL}`);
+console.log(`📦 Redis: ${config.redis.host}:${config.redis.port}`);
 console.log(`⏰ Timezone: ${process.env.TZ} (Current: ${new Date().toLocaleString('id-ID', {timeZone: 'Asia/Jakarta'})})`);
+console.log(`📍 Kontrol Path: /${FIREBASE_PATHS.kontrol}`);
 
 // ==================== ENVIRONMENT VALIDATION ====================
 
@@ -240,9 +249,15 @@ let lastScheduleCheck = {};
 // Counter untuk tracking berapa kali check dilakukan
 let checkCounter = 0;
 let consecutiveFirebaseErrors = 0;
+let sdkSuccessCount = 0;
+let restFallbackCount = 0;
+
+// Smart fallback: Skip SDK jika sudah gagal berturut-turut 3x
+const SKIP_SDK_THRESHOLD = 3;
+const RESET_THRESHOLD_AFTER = 50; // Reset counter setelah 50 check (50 menit)
 
 // Helper function untuk Firebase fetch dengan timeout
-async function fetchWithTimeout(ref, timeoutMs = 10000) {
+async function fetchWithTimeout(ref, timeoutMs = 5000) {
   return Promise.race([
     ref.once('value'),
     new Promise((_, reject) => 
@@ -252,7 +267,7 @@ async function fetchWithTimeout(ref, timeoutMs = 10000) {
 }
 
 // Helper: Fetch with timeout wrapper (for REST API calls)
-async function fetchWithTimeout2(url, options = {}, timeoutMs = 10000) {
+async function fetchWithTimeout2(url, options = {}, timeoutMs = 8000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   
@@ -274,13 +289,13 @@ async function fetchWithTimeout2(url, options = {}, timeoutMs = 10000) {
 
 // Fallback: Fetch via Firebase REST API (lebih reliable)
 async function fetchKontrolViaREST() {
-  const url = `${config.firebase.databaseURL}/kontrol.json`;
+  const url = `${config.firebase.databaseURL}/${FIREBASE_PATHS.kontrol}.json`;
   console.log(`   [DEBUG] Trying REST API: ${url}`);
   
   const response = await fetchWithTimeout2(url, {
     method: 'GET',
     headers: { 'Content-Type': 'application/json' }
-  }, 10000);
+  }, 8000);
   
   if (!response.ok) {
     throw new Error(`REST API failed: ${response.status} ${response.statusText}`);
@@ -293,10 +308,36 @@ async function fetchKontrolViaREST() {
 
 // Smart fetch: Try SDK first, fallback to REST if needed
 async function fetchKontrolSmart() {
+  // Smart fallback: Skip SDK if it failed 3+ times consecutively
+  const shouldSkipSDK = consecutiveFirebaseErrors >= SKIP_SDK_THRESHOLD;
+  
+  if (shouldSkipSDK) {
+    console.log('   [SMART] Skipping SDK (3+ consecutive failures), using REST API directly...');
+    try {
+      const data = await fetchKontrolViaREST();
+      restFallbackCount++;
+      
+      // Reset counter setelah threshold untuk retry SDK
+      if (restFallbackCount >= RESET_THRESHOLD_AFTER) {
+        console.log('   [SMART] Resetting SDK retry counter...');
+        consecutiveFirebaseErrors = 0;
+        restFallbackCount = 0;
+      }
+      
+      return data;
+    } catch (restError) {
+      console.error('   ❌ REST API failed:', restError.message);
+      throw new Error('REST API failed');
+    }
+  }
+  
+  // Normal flow: Try SDK first
   try {
     console.log('   [DEBUG] Attempting SDK fetch...');
-    const snapshot = await fetchWithTimeout(db.ref('kontrol'), 10000);
+    const snapshot = await fetchWithTimeout(db.ref(FIREBASE_PATHS.kontrol), 5000);
     consecutiveFirebaseErrors = 0; // Reset error counter
+    restFallbackCount = 0; // Reset fallback counter
+    sdkSuccessCount++;
     return snapshot.val();
   } catch (sdkError) {
     console.warn('   ⚠️  SDK fetch failed, trying REST API...');
@@ -304,6 +345,13 @@ async function fetchKontrolSmart() {
     
     try {
       const data = await fetchKontrolViaREST();
+      restFallbackCount++;
+      
+      // Log peringatan jika SDK terus gagal
+      if (consecutiveFirebaseErrors === SKIP_SDK_THRESHOLD) {
+        console.warn(`   🚨 SDK failed ${SKIP_SDK_THRESHOLD}x consecutively! Will use REST API directly for next ${RESET_THRESHOLD_AFTER} checks.`);
+      }
+      
       return data;
     } catch (restError) {
       console.error('   ❌ REST API also failed:', restError.message);
@@ -321,7 +369,7 @@ async function updateFirebaseViaREST(path, updates) {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updates)
-  }, 10000);
+  }, 8000);
   
   if (!response.ok) {
     throw new Error(`REST PATCH failed: ${response.status}`);
@@ -333,7 +381,7 @@ async function updateFirebaseViaREST(path, updates) {
 }
 
 // Helper: Update with timeout wrapper
-async function updateWithTimeout(ref, updates, timeoutMs = 10000) {
+async function updateWithTimeout(ref, updates, timeoutMs = 5000) {
   return Promise.race([
     ref.update(updates),
     new Promise((_, reject) => 
@@ -347,9 +395,24 @@ async function updateFirebaseSmart(path, updates) {
   const updateStr = JSON.stringify(updates);
   console.log(`   [UPDATE START] Path: ${path}, Data: ${updateStr}`);
   
+  // If SDK is consistently failing, skip it for updates too
+  const shouldSkipSDK = consecutiveFirebaseErrors >= SKIP_SDK_THRESHOLD;
+  
+  if (shouldSkipSDK) {
+    console.log(`   [UPDATE] Using REST API directly (SDK disabled)`);
+    try {
+      await updateFirebaseViaREST(path, updates);
+      console.log(`   ✅ [UPDATE] REST API successful!`);
+      return true;
+    } catch (restError) {
+      console.error(`   ❌ [UPDATE] REST failed: ${restError.message}`);
+      throw new Error('REST update failed');
+    }
+  }
+  
   try {
     console.log(`   [UPDATE] Step 1: Attempting SDK update...`);
-    await updateWithTimeout(db.ref(path), updates, 10000);
+    await updateWithTimeout(db.ref(path), updates, 5000);
     console.log(`   ✅ [UPDATE] Step 2: SDK update successful!`);
     return true;
   } catch (sdkError) {
@@ -375,7 +438,7 @@ async function setFirebaseViaREST(path, data) {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
-  }, 10000);
+  }, 8000);
   
   if (!response.ok) {
     throw new Error(`REST PUT failed: ${response.status}`);
@@ -385,7 +448,7 @@ async function setFirebaseViaREST(path, data) {
 }
 
 // Helper: Set with timeout wrapper
-async function setWithTimeout(ref, data, timeoutMs = 10000) {
+async function setWithTimeout(ref, data, timeoutMs = 5000) {
   return Promise.race([
     ref.set(data),
     new Promise((_, reject) => 
@@ -399,9 +462,24 @@ async function setFirebaseSmart(path, data) {
   const dataStr = JSON.stringify(data);
   console.log(`   [SET START] Path: ${path}, Data: ${dataStr.substring(0,100)}...`);
   
+  // If SDK is consistently failing, skip it
+  const shouldSkipSDK = consecutiveFirebaseErrors >= SKIP_SDK_THRESHOLD;
+  
+  if (shouldSkipSDK) {
+    console.log(`   [SET] Using REST API directly (SDK disabled)`);
+    try {
+      await setFirebaseViaREST(path, data);
+      console.log(`   ✅ [SET] REST API successful!`);
+      return true;
+    } catch (restError) {
+      console.error(`   ❌ [SET] REST failed: ${restError.message}`);
+      throw new Error('REST set failed');
+    }
+  }
+  
   try {
     console.log(`   [SET] Step 1: Attempting SDK set...`);
-    await setWithTimeout(db.ref(path), data, 10000);
+    await setWithTimeout(db.ref(path), data, 5000);
     console.log(`   ✅ [SET] Step 2: SDK set successful!`);
     return true;
   } catch (sdkError) {
@@ -420,15 +498,32 @@ async function setFirebaseSmart(path, data) {
 
 // Smart read: Try SDK first, fallback to REST if timeout (for any path)
 async function readFirebaseSmart(path) {
+  const shouldSkipSDK = consecutiveFirebaseErrors >= SKIP_SDK_THRESHOLD;
+  
+  if (shouldSkipSDK) {
+    console.log('   [READ] Using REST API directly (SDK disabled)');
+    const url = `${config.firebase.databaseURL}/${path}.json`;
+    const response = await fetchWithTimeout2(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
+    }, 8000);
+    
+    if (!response.ok) {
+      throw new Error(`REST GET failed: ${response.status}`);
+    }
+    
+    return await response.json();
+  }
+  
   try {
-    const snapshot = await fetchWithTimeout(db.ref(path), 10000);
+    const snapshot = await fetchWithTimeout(db.ref(path), 5000);
     return snapshot.val();
   } catch (sdkError) {
     const url = `${config.firebase.databaseURL}/${path}.json`;
     const response = await fetchWithTimeout2(url, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' }
-    }, 10000);
+    }, 8000);
     
     if (!response.ok) {
       throw new Error(`REST GET failed: ${response.status}`);
@@ -462,14 +557,34 @@ async function checkScheduledWatering() {
     // 🔍 VERBOSE LOG: Log setiap check untuk memastikan fungsi berjalan
     console.log(`\n⏱️  CHECK #${checkCounter}: ${currentTime}:${currentSeconds.toString().padStart(2, '0')} | Mode: ${kontrolConfig?.waktu ? '✅' : '❌'}`);
     
+    // Detect all schedules (jadwal_1, jadwal_2, jadwal_3, ...)
+    const allSchedules = kontrolConfig ? Object.keys(kontrolConfig).filter(key => key.startsWith('jadwal_')) : [];
+    
     // Log detail setiap 3 menit ATAU jika menit habis dibagi 5
     if (checkCounter % 3 === 0 || now.getMinutes() % 5 === 0) {
       console.log(`   📅 Date: ${dateKey}`);
       console.log(`   🕐 Current: ${currentTime} (${now.toLocaleString('id-ID', {timeZone: 'Asia/Jakarta'})})`);
       console.log(`   Mode Waktu: ${kontrolConfig?.waktu ? '✅ ENABLED' : '❌ DISABLED'}`);
-      if (kontrolConfig?.waktu) {
-        console.log(`   Jadwal 1: ${kontrolConfig.waktu_1 || 'not set'} ${kontrolConfig.waktu_1 === currentTime ? '🔔 MATCH!' : ''}`);
-        console.log(`   Jadwal 2: ${kontrolConfig.waktu_2 || 'not set'} ${kontrolConfig.waktu_2 === currentTime ? '🔔 MATCH!' : ''}`);
+      console.log(`   📊 API Stats: SDK=${sdkSuccessCount} | REST=${restFallbackCount} | Errors=${consecutiveFirebaseErrors}`);
+      console.log(`   📋 Total Jadwal: ${allSchedules.length}`);
+      
+      if (kontrolConfig?.waktu && allSchedules.length > 0) {
+        allSchedules.forEach(scheduleKey => {
+          const schedule = kontrolConfig[scheduleKey];
+          if (schedule && typeof schedule === 'object') {
+            const isActive = schedule.aktif !== false; // Default true if not specified
+            const waktu = schedule.waktu || 'not set';
+            const potAktif = schedule.pot_aktif || [];
+            const isMatch = waktu === currentTime;
+            console.log(`   ${isActive ? '✅' : '❌'} ${scheduleKey}: ${waktu} → Pot [${potAktif.join(', ')}] ${isMatch ? '🔔 MATCH!' : ''}`);
+          }
+        });
+      }
+      
+      // Legacy support: Log old format if exists
+      if (kontrolConfig?.waktu_1 || kontrolConfig?.waktu_2) {
+        console.log(`   [LEGACY] waktu_1: ${kontrolConfig.waktu_1 || 'not set'}`);
+        console.log(`   [LEGACY] waktu_2: ${kontrolConfig.waktu_2 || 'not set'}`);
       }
     }
 
@@ -479,12 +594,88 @@ async function checkScheduledWatering() {
       return;
     }
 
+    // NEW: Dynamic schedule checking - supports jadwal_1, jadwal_2, ... jadwal_N
+    for (const scheduleKey of allSchedules) {
+      const schedule = kontrolConfig[scheduleKey];
+      
+      // Validate schedule structure
+      if (!schedule || typeof schedule !== 'object') {
+        console.log(`   ⚠️  ${scheduleKey}: Invalid structure, skipping`);
+        continue;
+      }
+      
+      // Check if schedule is active (default: true if not specified)
+      const isActive = schedule.aktif !== false;
+      if (!isActive) {
+        continue; // Skip disabled schedules
+      }
+      
+      // Check if time matches
+      const scheduleWaktu = schedule.waktu;
+      if (!scheduleWaktu || scheduleWaktu !== currentTime) {
+        continue; // Not time yet
+      }
+      
+      // Extract schedule config
+      const potAktif = schedule.pot_aktif || [];
+      const durasi = schedule.durasi || 60;
+      const pompaAir = schedule.pompa_air !== false; // Default true
+      const pompaPupuk = schedule.pompa_pupuk || false; // Default false
+      
+      // Validate pot_aktif
+      if (!Array.isArray(potAktif) || potAktif.length === 0) {
+        console.log(`   ⚠️  ${scheduleKey}: No active pots defined, skipping`);
+        continue;
+      }
+      
+      // Create unique job key
+      const jobKey = `${scheduleKey}_${dateKey}_${currentTime.replace(':', '_')}`;
+      
+      if (!lastScheduleCheck[jobKey]) {
+        console.log(`\n🕐 ${scheduleKey.toUpperCase()} TRIGGERED: ${currentTime}`);
+        console.log(`   🎯 Pot aktif: [${potAktif.join(', ')}]`);
+        console.log(`   ⏱️  Durasi: ${durasi}s`);
+        console.log(`   💧 Pompa Air: ${pompaAir ? 'ON' : 'OFF'}`);
+        console.log(`   🌿 Pompa Pupuk: ${pompaPupuk ? 'ON' : 'OFF'}`);
+
+        try {
+          await wateringQueue.add(
+            scheduleKey,
+            {
+              type: `waktu_${scheduleKey}`,
+              potNumbers: potAktif,
+              pompaAir: pompaAir,
+              pompaPupuk: pompaPupuk,
+              duration: durasi,
+              scheduleId: jobKey,
+            },
+            {
+              jobId: jobKey,
+              removeOnComplete: true,
+            }
+          );
+          
+          lastScheduleCheck[jobKey] = true;
+          console.log(`   ✅ Successfully added to queue: ${jobKey}`);
+          
+          // Check queue status
+          const queueStatus = await wateringQueue.getJobCounts();
+          console.log(`   📊 Queue status: ${queueStatus.active} active, ${queueStatus.waiting} waiting`);
+        } catch (queueError) {
+          console.error(`   ❌ Failed to add ${scheduleKey} to queue:`, queueError.message);
+        }
+      } else {
+        console.log(`   ⏭️  ${scheduleKey} already triggered: ${jobKey}`);
+      }
+    }
+    
+    // LEGACY SUPPORT: Check old format (waktu_1, waktu_2) untuk backward compatibility
     if (kontrolConfig.waktu_1 && kontrolConfig.waktu_1 === currentTime) {
-      const scheduleKey = `jadwal_1_${dateKey}_${currentTime.replace(':', '_')}`;
+      const scheduleKey = `legacy_jadwal_1_${dateKey}_${currentTime.replace(':', '_')}`;
 
       if (!lastScheduleCheck[scheduleKey]) {
-        console.log(`\n🕐 JADWAL 1 TRIGGERED: ${currentTime}`);
-        console.log(`   🎯 Attempting to add job to queue...`);
+        console.log(`\n🕐 [LEGACY] JADWAL 1 TRIGGERED: ${currentTime}`);
+        console.log(`   🎯 Using legacy format (all pots)`);
 
         try {
           await wateringQueue.add(
@@ -504,26 +695,19 @@ async function checkScheduledWatering() {
           );
           
           lastScheduleCheck[scheduleKey] = true;
-          console.log(`   ✅ Successfully added to queue: ${scheduleKey}`);
-          
-          // Check queue status
-          const queueStatus = await wateringQueue.getJobCounts();
-          console.log(`   📊 Queue status: ${queueStatus.active} active, ${queueStatus.waiting} waiting`);
+          console.log(`   ✅ Successfully added legacy jadwal_1 to queue`);
         } catch (queueError) {
-          console.error(`   ❌ Failed to add to queue:`, queueError.message);
+          console.error(`   ❌ Failed to add legacy jadwal_1:`, queueError.message);
         }
-      } else {
-        console.log(`   ⏭️  Jadwal 1 already triggered: ${scheduleKey}`);
       }
     }
 
-    // Check Jadwal 2
     if (kontrolConfig.waktu_2 && kontrolConfig.waktu_2 === currentTime) {
-      const scheduleKey = `jadwal_2_${dateKey}_${currentTime.replace(':', '_')}`;
+      const scheduleKey = `legacy_jadwal_2_${dateKey}_${currentTime.replace(':', '_')}`;
 
       if (!lastScheduleCheck[scheduleKey]) {
-        console.log(`\n🕑 JADWAL 2 TRIGGERED: ${currentTime}`);
-        console.log(`   🎯 Attempting to add job to queue...`);
+        console.log(`\n🕑 [LEGACY] JADWAL 2 TRIGGERED: ${currentTime}`);
+        console.log(`   🎯 Using legacy format (all pots)`);
 
         try {
           await wateringQueue.add(
@@ -543,16 +727,10 @@ async function checkScheduledWatering() {
           );
 
           lastScheduleCheck[scheduleKey] = true;
-          console.log(`   ✅ Successfully added to queue: ${scheduleKey}`);
-          
-          // Check queue status
-          const queueStatus = await wateringQueue.getJobCounts();
-          console.log(`   📊 Queue status: ${queueStatus.active} active, ${queueStatus.waiting} waiting`);
+          console.log(`   ✅ Successfully added legacy jadwal_2 to queue`);
         } catch (queueError) {
-          console.error(`   ❌ Failed to add to queue:`, queueError.message);
+          console.error(`   ❌ Failed to add legacy jadwal_2:`, queueError.message);
         }
-      } else {
-        console.log(`   ⏭️  Jadwal 2 already triggered: ${scheduleKey}`);
       }
     }
 
@@ -621,7 +799,7 @@ async function setupSensorMonitoring() {
         return;
       }
 
-      const configSnapshot = await fetchWithTimeout(db.ref('kontrol'), 10000);
+      const configSnapshot = await fetchWithTimeout(db.ref(FIREBASE_PATHS.kontrol), 10000);
       const kontrolConfig = configSnapshot.val();
 
       // Log sensor check (verbose hanya setiap 10 kali)
@@ -884,7 +1062,7 @@ async function showCurrentTime() {
     
     // Check Firebase kontrol waktu
     console.log('[DEBUG] Fetching kontrol for time analysis...');
-    const snapshot = await fetchWithTimeout(db.ref('kontrol'), 10000);
+    const snapshot = await fetchWithTimeout(db.ref(FIREBASE_PATHS.kontrol), 10000);
     const kontrolConfig = snapshot.val();
     console.log('[DEBUG] Kontrol fetch successful');
     
@@ -1003,11 +1181,11 @@ setTimeout(async () => {
   try {
     console.log('🔍 Verifying Firebase connection...');
     console.log('[DEBUG] Testing Firebase read with timeout...');
-    const snapshot = await fetchWithTimeout(db.ref('kontrol'), 10000);
+    const snapshot = await fetchWithTimeout(db.ref(FIREBASE_PATHS.kontrol), 10000);
     console.log('[DEBUG] Firebase read successful!');
     const data = snapshot.val();
     if (data) {
-      console.log('✅ Firebase /kontrol readable - waktu mode:', data.waktu ? 'ENABLED' : 'DISABLED');
+      console.log(`✅ Firebase /${FIREBASE_PATHS.kontrol} readable - waktu mode:`, data.waktu ? 'ENABLED' : 'DISABLED');
       if (data.waktu) {
         console.log(`   📅 Schedules: ${data.waktu_1 || 'none'} / ${data.waktu_2 || 'none'}`);
       }
