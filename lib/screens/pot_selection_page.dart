@@ -4,6 +4,8 @@ import '../widgets/kontrol_widgets.dart';
 import '../services/kontrol_storage.dart';
 import 'waktu_config_page.dart';
 import 'sensor_config_page.dart';
+import 'jadwal_management_page.dart';
+import 'threshold_management_page.dart';
 
 class PotSelectionPage extends StatefulWidget {
   final String mode;
@@ -141,30 +143,22 @@ class _PotSelectionPageState extends State<PotSelectionPage> {
                       mode: 'Waktu',
                       isSelected: widget.mode == 'Waktu',
                       onPressed: () {
-                        if (widget.mode != 'Waktu') {
-                          Navigator.of(context).pushReplacement(
-                            MaterialPageRoute(
-                              builder:
-                                  (context) =>
-                                      const PotSelectionPage(mode: 'Waktu'),
-                            ),
-                          );
-                        }
+                        Navigator.of(context).pushReplacement(
+                          MaterialPageRoute(
+                            builder: (context) => const JadwalManagementPage(),
+                          ),
+                        );
                       },
                     ),
                     ModeButton(
                       mode: 'Sensor',
                       isSelected: widget.mode == 'Sensor',
                       onPressed: () {
-                        if (widget.mode != 'Sensor') {
-                          Navigator.of(context).pushReplacement(
-                            MaterialPageRoute(
-                              builder:
-                                  (context) =>
-                                      const PotSelectionPage(mode: 'Sensor'),
-                            ),
-                          );
-                        }
+                        Navigator.of(context).pushReplacement(
+                          MaterialPageRoute(
+                            builder: (context) => const ThresholdManagementPage(),
+                          ),
+                        );
                       },
                     ),
                   ],
