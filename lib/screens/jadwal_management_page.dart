@@ -165,12 +165,6 @@ class _JadwalManagementPageState extends State<JadwalManagementPage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _navigateToForm(),
-        backgroundColor: AppColors.primaryGreen,
-        icon: const Icon(Icons.add),
-        label: const Text('Tambah Jadwal'),
-      ),
     );
   }
 
@@ -265,8 +259,30 @@ class _JadwalManagementPageState extends State<JadwalManagementPage> {
       onRefresh: _loadJadwal,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
-        itemCount: _jadwalList.length,
+        itemCount: _jadwalList.length + 1, // +1 for add button
         itemBuilder: (context, index) {
+          if (index == _jadwalList.length) {
+            // Add button at the bottom
+            return Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 80),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _navigateToForm(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Tambah Jadwal Baru'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryGreen,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }
           final jadwal = _jadwalList[index];
           return _buildJadwalCard(jadwal);
         },
@@ -369,24 +385,97 @@ class _JadwalManagementPageState extends State<JadwalManagementPage> {
                 ),
                 const SizedBox(height: 12),
 
-                // Pumps
-                Row(
+                // Pumps - Display only if enabled
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
-                    Expanded(
-                      child: _buildPumpChip(
-                        'Pompa Air',
-                        jadwal.pompaAir,
-                        Icons.water_drop,
+                    if (jadwal.pompaAir)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.blue[50],
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.blue[300]!),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.water,
+                              size: 14,
+                              color: Colors.blue[700],
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Air',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.blue[900],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildPumpChip(
-                        'Pompa Pupuk',
-                        jadwal.pompaPupuk,
-                        Icons.science,
+                    if (jadwal.pompaPupuk)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.green[50],
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.green[300]!),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.eco, size: 14, color: Colors.green[700]),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Larutan Nutrisi',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.green[900],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                    if (jadwal.pompaPengaduk)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.purple[50],
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.purple[300]!),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.blender,
+                              size: 14,
+                              color: Colors.purple[700],
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Pengaduk',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.purple[900],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
 
@@ -448,44 +537,6 @@ class _JadwalManagementPageState extends State<JadwalManagementPage> {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildPumpChip(String label, bool enabled, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color:
-            enabled
-                ? AppColors.primaryGreen.withOpacity(0.1)
-                : Colors.grey[200],
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: enabled ? AppColors.primaryGreen : Colors.grey[400]!,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            size: 16,
-            color: enabled ? AppColors.primaryGreen : Colors.grey[600],
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: enabled ? AppColors.primaryGreen : Colors.grey[600],
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

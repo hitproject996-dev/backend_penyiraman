@@ -22,6 +22,7 @@ class _ThresholdManagementPageState extends State<ThresholdManagementPage> {
   void initState() {
     super.initState();
     _loadThreshold();
+    _loadSensorModeStatus();
   }
 
   Future<void> _loadThreshold() async {
@@ -35,6 +36,23 @@ class _ThresholdManagementPageState extends State<ThresholdManagementPage> {
     } catch (e) {
       setState(() => _isLoading = false);
       _showError('Gagal memuat threshold: $e');
+    }
+  }
+
+  Future<void> _loadSensorModeStatus() async {
+    final status = await ThresholdService.getSensorModeStatus();
+    setState(() => _sensorModeEnabled = status);
+  }
+
+  Future<void> _toggleSensorMode(bool value) async {
+    final success = await ThresholdService.setSensorModeStatus(value);
+    if (success) {
+      setState(() => _sensorModeEnabled = value);
+      _showSuccess(
+        value ? 'Mode Sensor Diaktifkan' : 'Mode Sensor Dinonaktifkan',
+      );
+    } else {
+      _showError('Gagal mengubah mode sensor');
     }
   }
 
@@ -98,20 +116,21 @@ class _ThresholdManagementPageState extends State<ThresholdManagementPage> {
   Future<bool?> _showConfirmDialog(String title, String message) {
     return showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Batal'),
+      builder:
+          (context) => AlertDialog(
+            title: Text(title),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Batal'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Hapus', style: TextStyle(color: Colors.red)),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Hapus', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
     );
   }
 
@@ -152,19 +171,79 @@ class _ThresholdManagementPageState extends State<ThresholdManagementPage> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadThreshold,
-              child: _thresholdList.isEmpty
-                  ? _buildEmptyState()
-                  : _buildThresholdList(),
+      body: Column(
+        children: [
+          _buildSensorModeCard(),
+          Expanded(
+            child:
+                _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _thresholdList.isEmpty
+                    ? _buildEmptyState()
+                    : _buildThresholdList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSensorModeCard() {
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color:
+                  _sensorModeEnabled
+                      ? AppColor.primary.withOpacity(0.1)
+                      : Colors.grey.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
             ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _navigateToForm(),
-        backgroundColor: AppColor.primary,
-        icon: const Icon(Icons.add),
-        label: const Text('Tambah Threshold'),
+            child: Icon(
+              Icons.sensors,
+              color: _sensorModeEnabled ? AppColor.primary : Colors.grey,
+              size: 28,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Mode Sensor',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _sensorModeEnabled
+                      ? 'Monitoring otomatis aktif'
+                      : 'Monitoring otomatis nonaktif',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _sensorModeEnabled,
+            onChanged: _toggleSensorMode,
+            activeColor: AppColor.primary,
+          ),
+        ],
       ),
     );
   }
@@ -195,13 +274,38 @@ class _ThresholdManagementPageState extends State<ThresholdManagementPage> {
   }
 
   Widget _buildThresholdList() {
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _thresholdList.length,
-      itemBuilder: (context, index) {
-        final threshold = _thresholdList[index];
-        return _buildThresholdCard(threshold);
-      },
+    return RefreshIndicator(
+      onRefresh: _loadThreshold,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _thresholdList.length + 1, // +1 for add button
+        itemBuilder: (context, index) {
+          if (index == _thresholdList.length) {
+            // Add button at the bottom
+            return Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 80),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _navigateToForm(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Tambah Threshold Baru'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColor.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }
+          final threshold = _thresholdList[index];
+          return _buildThresholdCard(threshold);
+        },
+      ),
     );
   }
 
@@ -233,7 +337,10 @@ class _ThresholdManagementPageState extends State<ThresholdManagementPage> {
                     ),
                     child: Icon(
                       Icons.sensors,
-                      color: threshold.aktif ? AppColors.primaryGreen : Colors.grey,
+                      color:
+                          threshold.aktif
+                              ? AppColors.primaryGreen
+                              : Colors.grey,
                       size: 24,
                     ),
                   ),
@@ -383,10 +490,43 @@ class _ThresholdManagementPageState extends State<ThresholdManagementPage> {
                           Icon(Icons.eco, size: 14, color: Colors.green[700]),
                           const SizedBox(width: 4),
                           Text(
-                            'Pupuk',
+                            'Larutan Nutrisi',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.green[900],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if ((threshold.pompaAir || threshold.pompaPupuk) &&
+                      threshold.pompaPengaduk)
+                    const SizedBox(width: 8),
+                  if (threshold.pompaPengaduk)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.purple[50],
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.purple[300]!),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.blender,
+                            size: 14,
+                            color: Colors.purple[700],
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Pengaduk',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.purple[900],
                             ),
                           ),
                         ],
@@ -399,33 +539,33 @@ class _ThresholdManagementPageState extends State<ThresholdManagementPage> {
 
               // Action buttons
               Row(
-                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  TextButton.icon(
-                    onPressed: () => _navigateToForm(threshold: threshold),
-                    icon: const Icon(Icons.edit, size: 18),
-                    label: const Text('Edit'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.blue,
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _navigateToForm(threshold: threshold),
+                      icon: const Icon(Icons.edit, size: 18),
+                      label: const Text('Edit'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColor.primary,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
-                  TextButton.icon(
-                    onPressed: () => _duplicateThreshold(threshold),
-                    icon: const Icon(Icons.copy, size: 18),
-                    label: const Text('Duplikat'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.orange,
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _duplicateThreshold(threshold),
+                      icon: const Icon(Icons.copy, size: 18),
+                      label: const Text('Duplikat'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.blue,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
-                  TextButton.icon(
+                  IconButton(
                     onPressed: () => _deleteThreshold(threshold),
-                    icon: const Icon(Icons.delete, size: 18),
-                    label: const Text('Hapus'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.red,
-                    ),
+                    icon: const Icon(Icons.delete),
+                    color: Colors.red,
                   ),
                 ],
               ),

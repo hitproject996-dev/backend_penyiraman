@@ -9,7 +9,7 @@ class ThresholdService {
   static Future<List<ThresholdModel>> getAllThreshold() async {
     try {
       final snapshot = await _dbRef.child(kontrolPath).get();
-      
+
       if (!snapshot.exists) {
         return [];
       }
@@ -87,7 +87,7 @@ class ThresholdService {
   static Future<String?> duplicateThreshold(ThresholdModel threshold) async {
     try {
       final allThresholds = await getAllThreshold();
-      
+
       // Cari ID tertinggi
       int maxId = 0;
       for (var t in allThresholds) {
@@ -113,7 +113,7 @@ class ThresholdService {
   static Future<ThresholdModel?> getThreshold(String id) async {
     try {
       final snapshot = await _dbRef.child(kontrolPath).child(id).get();
-      
+
       if (!snapshot.exists) return null;
 
       final data = snapshot.value as Map<dynamic, dynamic>?;
@@ -169,22 +169,25 @@ class ThresholdService {
   ) async {
     try {
       final allThresholds = await getAllThreshold();
-      
+
       for (var threshold in allThresholds) {
         // Skip threshold yang sama
         if (threshold.id == currentId) continue;
-        
+
         // Cek apakah ada pot yang sama
-        final hasSamePot = threshold.potAktif.any((pot) => potAktif.contains(pot));
+        final hasSamePot = threshold.potAktif.any(
+          (pot) => potAktif.contains(pot),
+        );
         if (!hasSamePot) continue;
-        
+
         // Cek apakah range overlap
-        final rangeOverlap = !(batasAtas < threshold.batasBawah || 
-                               batasBawah > threshold.batasAtas);
-        
+        final rangeOverlap =
+            !(batasAtas < threshold.batasBawah ||
+                batasBawah > threshold.batasAtas);
+
         if (rangeOverlap) return true;
       }
-      
+
       return false;
     } catch (e) {
       print('Error checking range overlap: $e');
@@ -196,20 +199,43 @@ class ThresholdService {
   static Future<String> getNextThresholdId() async {
     try {
       final allThresholds = await getAllThreshold();
-      
+
       if (allThresholds.isEmpty) return 'threshold_1';
-      
+
       // Cari ID tertinggi
       int maxId = 0;
       for (var t in allThresholds) {
         final num = int.tryParse(t.id.replaceAll('threshold_', '')) ?? 0;
         if (num > maxId) maxId = num;
       }
-      
+
       return 'threshold_${maxId + 1}';
     } catch (e) {
       print('Error getting next threshold ID: $e');
       return 'threshold_1';
+    }
+  }
+
+  // Get sensor mode status (otomatis)
+  static Future<bool> getSensorModeStatus() async {
+    try {
+      final snapshot = await _dbRef.child(kontrolPath).child('otomatis').get();
+      return snapshot.value as bool? ?? false;
+    } catch (e) {
+      print('Error getting sensor mode status: $e');
+      return false;
+    }
+  }
+
+  // Set sensor mode status (otomatis)
+  static Future<bool> setSensorModeStatus(bool enabled) async {
+    try {
+      await _dbRef.child(kontrolPath).child('otomatis').set(enabled);
+      print('✅ Sensor mode set to ${enabled ? "enabled" : "disabled"}');
+      return true;
+    } catch (e) {
+      print('❌ Error setting sensor mode: $e');
+      return false;
     }
   }
 }

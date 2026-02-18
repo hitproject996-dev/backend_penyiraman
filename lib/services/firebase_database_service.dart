@@ -19,6 +19,7 @@ class FirebaseDatabaseService {
           'suhu': _parseValue(data['suhu']),
           'kelembapan': _parseValue(data['kelembapan']),
           'ldr': _parseValue(data['ldr']),
+          'water_flow': data['water_flow'] ?? 0, // TAMBAHAN: water flow sensor
           'soil_1': _parseValue(data['soil_1']),
           'soil_2': _parseValue(data['soil_2']),
           'soil_3': _parseValue(data['soil_3']),
@@ -40,6 +41,7 @@ class FirebaseDatabaseService {
           'suhu': _parseValue(data['suhu']),
           'kelembapan': _parseValue(data['kelembapan']),
           'ldr': _parseValue(data['ldr']),
+          'water_flow': data['water_flow'] ?? 0, // TAMBAHAN: water flow sensor
           'soil_1': _parseValue(data['soil_1']),
           'soil_2': _parseValue(data['soil_2']),
           'soil_3': _parseValue(data['soil_3']),

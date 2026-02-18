@@ -8,6 +8,7 @@ class ThresholdModel {
   final List<int> potAktif; // [1,2,3] atau [4,5]
   final bool pompaAir;
   final bool pompaPupuk;
+  final bool pompaPengaduk;
 
   ThresholdModel({
     required this.id,
@@ -19,6 +20,7 @@ class ThresholdModel {
     required this.potAktif,
     required this.pompaAir,
     required this.pompaPupuk,
+    required this.pompaPengaduk,
   });
 
   // Parse dari Firebase
@@ -26,7 +28,9 @@ class ThresholdModel {
     List<int> parsePotAktif(dynamic potData) {
       if (potData == null) return [];
       if (potData is List) {
-        return potData.map((e) => e is int ? e : int.tryParse(e.toString()) ?? 0).toList();
+        return potData
+            .map((e) => e is int ? e : int.tryParse(e.toString()) ?? 0)
+            .toList();
       }
       return [];
     }
@@ -41,6 +45,7 @@ class ThresholdModel {
       potAktif: parsePotAktif(json['pot_aktif']),
       pompaAir: json['pompa_air'] == true,
       pompaPupuk: json['pompa_pupuk'] == true,
+      pompaPengaduk: json['pompa_pengaduk'] == true,
     );
   }
 
@@ -55,6 +60,7 @@ class ThresholdModel {
       'pot_aktif': potAktif,
       'pompa_air': pompaAir,
       'pompa_pupuk': pompaPupuk,
+      'pompa_pengaduk': pompaPengaduk,
     };
   }
 
@@ -100,6 +106,7 @@ class ThresholdModel {
     List<int>? potAktif,
     bool? pompaAir,
     bool? pompaPupuk,
+    bool? pompaPengaduk,
   }) {
     return ThresholdModel(
       id: id ?? this.id,
@@ -111,6 +118,7 @@ class ThresholdModel {
       potAktif: potAktif ?? this.potAktif,
       pompaAir: pompaAir ?? this.pompaAir,
       pompaPupuk: pompaPupuk ?? this.pompaPupuk,
+      pompaPengaduk: pompaPengaduk ?? this.pompaPengaduk,
     );
   }
 }

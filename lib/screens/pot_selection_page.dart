@@ -156,7 +156,8 @@ class _PotSelectionPageState extends State<PotSelectionPage> {
                       onPressed: () {
                         Navigator.of(context).pushReplacement(
                           MaterialPageRoute(
-                            builder: (context) => const ThresholdManagementPage(),
+                            builder:
+                                (context) => const ThresholdManagementPage(),
                           ),
                         );
                       },

@@ -24,6 +24,7 @@ class _JadwalFormPageState extends State<JadwalFormPage> {
   late List<bool> _potSelection; // [pot1, pot2, pot3, pot4, pot5]
   late bool _pompaAir;
   late bool _pompaPupuk;
+  late bool _pompaPengaduk;
   late bool _aktif;
 
   bool _isLoading = false;
@@ -58,6 +59,7 @@ class _JadwalFormPageState extends State<JadwalFormPage> {
 
       _pompaAir = jadwal.pompaAir;
       _pompaPupuk = jadwal.pompaPupuk;
+      _pompaPengaduk = jadwal.pompaPengaduk;
       _aktif = jadwal.aktif;
     } else {
       // Default values for new jadwal
@@ -67,6 +69,7 @@ class _JadwalFormPageState extends State<JadwalFormPage> {
       _potSelection = [false, false, false, false, false];
       _pompaAir = true;
       _pompaPupuk = false;
+      _pompaPengaduk = false;
       _aktif = true;
     }
   }
@@ -150,6 +153,7 @@ class _JadwalFormPageState extends State<JadwalFormPage> {
         potAktif: _selectedPots,
         pompaAir: _pompaAir,
         pompaPupuk: _pompaPupuk,
+        pompaPengaduk: _pompaPengaduk,
       );
 
       // Check if time slot is taken (for new or time changed)
@@ -603,11 +607,23 @@ class _JadwalFormPageState extends State<JadwalFormPage> {
           SwitchListTile(
             value: _pompaPupuk,
             onChanged: (value) => setState(() => _pompaPupuk = value),
-            title: const Text('Pompa Pupuk'),
-            subtitle: const Text('Mengalirkan pupuk/nutrisi'),
+            title: const Text('Pompa Larutan Nutrisi'),
+            subtitle: const Text('Mengalirkan larutan nutrisi cair'),
             secondary: Icon(
               Icons.science,
               color: _pompaPupuk ? Colors.orange : Colors.grey,
+            ),
+            activeColor: AppColors.primaryGreen,
+          ),
+          const Divider(),
+          SwitchListTile(
+            value: _pompaPengaduk,
+            onChanged: (value) => setState(() => _pompaPengaduk = value),
+            title: const Text('Pompa Pengaduk'),
+            subtitle: const Text('Mengaduk larutan nutrisi'),
+            secondary: Icon(
+              Icons.blender,
+              color: _pompaPengaduk ? Colors.purple : Colors.grey,
             ),
             activeColor: AppColors.primaryGreen,
           ),

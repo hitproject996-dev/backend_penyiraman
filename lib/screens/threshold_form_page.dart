@@ -25,6 +25,7 @@ class _ThresholdFormPageState extends State<ThresholdFormPage> {
   late List<bool> _potSelection; // [pot1, pot2, pot3, pot4, pot5]
   late bool _pompaAir;
   late bool _pompaPupuk;
+  late bool _pompaPengaduk;
   late bool _aktif;
 
   bool _isLoading = false;
@@ -54,6 +55,7 @@ class _ThresholdFormPageState extends State<ThresholdFormPage> {
 
       _pompaAir = threshold.pompaAir;
       _pompaPupuk = threshold.pompaPupuk;
+      _pompaPengaduk = threshold.pompaPengaduk;
       _aktif = threshold.aktif;
     } else {
       // Default values for new threshold
@@ -65,6 +67,7 @@ class _ThresholdFormPageState extends State<ThresholdFormPage> {
       _potSelection = [false, false, false, false, false];
       _pompaAir = true;
       _pompaPupuk = false;
+      _pompaPengaduk = false;
       _aktif = true;
     }
   }
@@ -130,6 +133,7 @@ class _ThresholdFormPageState extends State<ThresholdFormPage> {
         potAktif: _selectedPots,
         pompaAir: _pompaAir,
         pompaPupuk: _pompaPupuk,
+        pompaPengaduk: _pompaPengaduk,
       );
 
       // Save to Firebase
@@ -185,27 +189,28 @@ class _ThresholdFormPageState extends State<ThresholdFormPage> {
         title: Text(_isEditMode ? 'Edit Threshold' : 'Tambah Threshold'),
         centerTitle: true,
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Form(
-              key: _formKey,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  _buildRangeSection(),
-                  const SizedBox(height: 24),
-                  _buildModeSection(),
-                  const SizedBox(height: 24),
-                  _buildPotSelection(),
-                  const SizedBox(height: 24),
-                  _buildPumpSection(),
-                  const SizedBox(height: 24),
-                  _buildStatusSection(),
-                  const SizedBox(height: 32),
-                  _buildSaveButton(),
-                ],
+      body:
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : Form(
+                key: _formKey,
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    _buildRangeSection(),
+                    const SizedBox(height: 24),
+                    _buildModeSection(),
+                    const SizedBox(height: 24),
+                    _buildPotSelection(),
+                    const SizedBox(height: 24),
+                    _buildPumpSection(),
+                    const SizedBox(height: 24),
+                    _buildStatusSection(),
+                    const SizedBox(height: 32),
+                    _buildSaveButton(),
+                  ],
+                ),
               ),
-            ),
     );
   }
 
@@ -527,8 +532,25 @@ class _ThresholdFormPageState extends State<ThresholdFormPage> {
                   _pompaPupuk = value;
                 });
               },
-              title: const Text('Pompa Pupuk'),
-              subtitle: const Text('Aktifkan pompa pupuk saat penyiraman'),
+              title: const Text('Pompa Larutan Nutrisi'),
+              subtitle: const Text(
+                'Aktifkan pompa larutan nutrisi saat penyiraman',
+              ),
+              activeColor: AppColor.primary,
+              contentPadding: EdgeInsets.zero,
+            ),
+
+            SwitchListTile(
+              value: _pompaPengaduk,
+              onChanged: (value) {
+                setState(() {
+                  _pompaPengaduk = value;
+                });
+              },
+              title: const Text('Pompa Pengaduk'),
+              subtitle: const Text(
+                'Aktifkan pompa pengaduk untuk mengaduk larutan',
+              ),
               activeColor: AppColor.primary,
               contentPadding: EdgeInsets.zero,
             ),
@@ -567,27 +589,26 @@ class _ThresholdFormPageState extends State<ThresholdFormPage> {
         backgroundColor: AppColor.primary,
         foregroundColor: Colors.white,
         padding: const EdgeInsets.symmetric(vertical: 16),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         elevation: 2,
       ),
-      child: _isLoading
-          ? const SizedBox(
-              height: 20,
-              width: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+      child:
+          _isLoading
+              ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              )
+              : Text(
+                _isEditMode ? 'Update Threshold' : 'Simpan Threshold',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            )
-          : Text(
-              _isEditMode ? 'Update Threshold' : 'Simpan Threshold',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
     );
   }
 }

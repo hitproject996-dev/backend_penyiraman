@@ -336,6 +336,7 @@ class _DashboardPageState extends State<DashboardPage> {
         final suhu = data['suhu'] ?? '0';
         final kelembapan = data['kelembapan'] ?? '0';
         final ldr = data['ldr'] ?? '0';
+        final waterFlow = data['water_flow'] ?? 0;
         final soil1 = data['soil_1'] ?? '0';
         final soil2 = data['soil_2'] ?? '0';
         final soil3 = data['soil_3'] ?? '0';
@@ -347,8 +348,14 @@ class _DashboardPageState extends State<DashboardPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Connection Status Indicator
-              _buildConnectionStatus(),
+              // Connection Status & Water Status Indicators
+              Row(
+                children: [
+                  _buildConnectionStatus(),
+                  const SizedBox(width: 12),
+                  _buildWaterFlowStatus(waterFlow),
+                ],
+              ),
               const SizedBox(height: 8),
 
               // Sensor Cards - Temperature, Humidity, Light
@@ -431,6 +438,71 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildWaterFlowStatus(dynamic waterFlow) {
+    // Debug: Print raw value
+    print(
+      '🔍 DEBUG Water Flow - Raw value: $waterFlow, Type: ${waterFlow.runtimeType}',
+    );
+
+    // Parse waterFlow to int - handles all cases
+    int flowValue = 0;
+
+    if (waterFlow == null) {
+      flowValue = 0;
+      print('   → Water flow is NULL');
+    } else if (waterFlow is int) {
+      flowValue = waterFlow;
+      print('   → Parsed as int: $flowValue');
+    } else if (waterFlow is double) {
+      flowValue = waterFlow.toInt();
+      print('   → Parsed as double to int: $flowValue');
+    } else if (waterFlow is String) {
+      flowValue = int.tryParse(waterFlow) ?? 0;
+      print('   → Parsed from string: $flowValue');
+    } else {
+      final stringValue = waterFlow.toString();
+      flowValue = int.tryParse(stringValue) ?? 0;
+      print('   → Parsed from toString(): $flowValue');
+    }
+
+    final hasWater = flowValue > 0;
+    print('   → Final: flowValue=$flowValue, hasWater=$hasWater');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color:
+            hasWater
+                ? Colors.green.withOpacity(0.1)
+                : Colors.red.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: hasWater ? Colors.green : Colors.red,
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.water_drop,
+            size: 14,
+            color: hasWater ? Colors.green : Colors.red,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            hasWater ? 'Air Tersedia' : 'Air Habis',
+            style: TextStyle(
+              color: hasWater ? Colors.green : Colors.red,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

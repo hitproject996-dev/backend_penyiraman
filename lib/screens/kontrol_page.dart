@@ -83,7 +83,8 @@ class _KontrolPageState extends State<KontrolPage> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => const ThresholdManagementPage(),
+                            builder:
+                                (context) => const ThresholdManagementPage(),
                           ),
                         );
                       },
