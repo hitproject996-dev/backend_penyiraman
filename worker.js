@@ -65,6 +65,8 @@ const config = {
     concurrency: 1, // Process 1 job at a time (prevent race condition)
     checkInterval: 60000, // Check jadwal setiap 60 detik (reduced from 30s)
     sensorDebounce: 120000, // 2 menit minimum antar penyiraman per pot
+    scheduleGraceMs: parseInt(process.env.SCHEDULE_GRACE_MS || '15000', 10), // Toleransi keterlambatan trigger
+    scheduleMaxCatchupMs: parseInt(process.env.SCHEDULE_MAX_CATCHUP_MS || '300000', 10), // Maksimal catch-up 5 menit
   },
 };
 
@@ -332,6 +334,7 @@ wateringWorker.on('failed', (job, err) => {
 // ==================== WAKTU MODE (TIME SCHEDULER) ====================
 
 let lastScheduleCheck = {};
+let lastSchedulerTickAt = null;
 
 // Counter untuk tracking berapa kali check dilakukan
 let checkCounter = 0;
@@ -620,6 +623,36 @@ async function readFirebaseSmart(path) {
   }
 }
 
+// Parse HH:mm menjadi Date hari ini (timezone proses mengikuti process.env.TZ)
+function parseScheduleTimeToday(scheduleTime, now) {
+  if (typeof scheduleTime !== 'string' || !/^\d{2}:\d{2}$/.test(scheduleTime)) {
+    return null;
+  }
+
+  const [hourStr, minuteStr] = scheduleTime.split(':');
+  const hour = Number(hourStr);
+  const minute = Number(minuteStr);
+
+  if (Number.isNaN(hour) || Number.isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  const scheduledAt = new Date(now);
+  scheduledAt.setHours(hour, minute, 0, 0);
+  return scheduledAt;
+}
+
+function isScheduleInTriggerWindow(scheduleTime, now, windowStartMs, windowEndMs) {
+  const scheduleDate = parseScheduleTimeToday(scheduleTime, now);
+  if (!scheduleDate) {
+    return { match: false, scheduleMs: null };
+  }
+
+  const scheduleMs = scheduleDate.getTime();
+  const match = scheduleMs >= windowStartMs && scheduleMs <= windowEndMs;
+  return { match, scheduleMs };
+}
+
 async function checkScheduledWatering() {
   checkCounter++;
   console.log(`\n🔎 [DEBUG] checkScheduledWatering() called - Counter: ${checkCounter}`);
@@ -637,9 +670,19 @@ async function checkScheduledWatering() {
     }
 
     const now = new Date();
+    const checkEndMs = now.getTime();
     const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
     const currentSeconds = now.getSeconds();
     const dateKey = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}`;
+
+    // Trigger window untuk mencegah jadwal terlewat karena delay polling/API.
+    const graceMs = config.worker.scheduleGraceMs;
+    const maxCatchupMs = config.worker.scheduleMaxCatchupMs;
+    const fallbackStartMs = checkEndMs - config.worker.checkInterval;
+    const baselineStartMs = lastSchedulerTickAt || fallbackStartMs;
+    const boundedStartMs = Math.max(baselineStartMs, checkEndMs - maxCatchupMs);
+    const triggerWindowStartMs = boundedStartMs - graceMs;
+    const triggerWindowEndMs = checkEndMs;
     
     // 🔍 VERBOSE LOG: Log setiap check untuk memastikan fungsi berjalan
     console.log(`\n⏱️  CHECK #${checkCounter}: ${currentTime}:${currentSeconds.toString().padStart(2, '0')} | Mode: ${kontrolConfig?.waktu ? '✅' : '❌'}`);
@@ -651,6 +694,7 @@ async function checkScheduledWatering() {
     if (checkCounter % 3 === 0 || now.getMinutes() % 5 === 0) {
       console.log(`   📅 Date: ${dateKey}`);
       console.log(`   🕐 Current: ${currentTime} (${now.toLocaleString('id-ID', {timeZone: 'Asia/Jakarta'})})`);
+      console.log(`   🪟 Trigger window: ${new Date(triggerWindowStartMs).toLocaleTimeString('id-ID')} - ${new Date(triggerWindowEndMs).toLocaleTimeString('id-ID')}`);
       console.log(`   Mode Waktu: ${kontrolConfig?.waktu ? '✅ ENABLED' : '❌ DISABLED'}`);
       console.log(`   📊 API Stats: SDK=${sdkSuccessCount} | REST=${restFallbackCount} | Errors=${consecutiveFirebaseErrors}`);
       console.log(`   📋 Total Jadwal: ${allSchedules.length}`);
@@ -699,8 +743,22 @@ async function checkScheduledWatering() {
       
       // Check if time matches
       const scheduleWaktu = schedule.waktu;
-      if (!scheduleWaktu || scheduleWaktu !== currentTime) {
-        continue; // Not time yet
+      const { match: isInWindow, scheduleMs } = isScheduleInTriggerWindow(
+        scheduleWaktu,
+        now,
+        triggerWindowStartMs,
+        triggerWindowEndMs
+      );
+
+      if (!isInWindow) {
+        continue; // Belum/terlalu lama lewat untuk window ini
+      }
+
+      if (scheduleMs !== null) {
+        const delayedSec = Math.max(0, Math.floor((triggerWindowEndMs - scheduleMs) / 1000));
+        if (delayedSec > 0) {
+          console.log(`   ⏱️  ${scheduleKey}: Triggered with ${delayedSec}s delay (within tolerance)`);
+        }
       }
       
       // Extract schedule config
@@ -716,7 +774,8 @@ async function checkScheduledWatering() {
       }
       
       // Create unique job key
-      const jobKey = `${scheduleKey}_${dateKey}_${currentTime.replace(':', '_')}`;
+      const normalizedScheduleTime = scheduleWaktu.replace(':', '_');
+      const jobKey = `${scheduleKey}_${dateKey}_${normalizedScheduleTime}`;
       
       if (!lastScheduleCheck[jobKey]) {
         console.log(`\n🕐 ${scheduleKey.toUpperCase()} TRIGGERED: ${currentTime}`);
@@ -757,8 +816,16 @@ async function checkScheduledWatering() {
     }
     
     // LEGACY SUPPORT: Check old format (waktu_1, waktu_2) untuk backward compatibility
-    if (kontrolConfig.waktu_1 && kontrolConfig.waktu_1 === currentTime) {
-      const scheduleKey = `legacy_jadwal_1_${dateKey}_${currentTime.replace(':', '_')}`;
+    const legacy1Window = isScheduleInTriggerWindow(
+      kontrolConfig.waktu_1,
+      now,
+      triggerWindowStartMs,
+      triggerWindowEndMs
+    );
+
+    if (legacy1Window.match) {
+      const legacyTimeKey = kontrolConfig.waktu_1.replace(':', '_');
+      const scheduleKey = `legacy_jadwal_1_${dateKey}_${legacyTimeKey}`;
 
       if (!lastScheduleCheck[scheduleKey]) {
         console.log(`\n🕐 [LEGACY] JADWAL 1 TRIGGERED: ${currentTime}`);
@@ -789,8 +856,16 @@ async function checkScheduledWatering() {
       }
     }
 
-    if (kontrolConfig.waktu_2 && kontrolConfig.waktu_2 === currentTime) {
-      const scheduleKey = `legacy_jadwal_2_${dateKey}_${currentTime.replace(':', '_')}`;
+    const legacy2Window = isScheduleInTriggerWindow(
+      kontrolConfig.waktu_2,
+      now,
+      triggerWindowStartMs,
+      triggerWindowEndMs
+    );
+
+    if (legacy2Window.match) {
+      const legacyTimeKey = kontrolConfig.waktu_2.replace(':', '_');
+      const scheduleKey = `legacy_jadwal_2_${dateKey}_${legacyTimeKey}`;
 
       if (!lastScheduleCheck[scheduleKey]) {
         console.log(`\n🕑 [LEGACY] JADWAL 2 TRIGGERED: ${currentTime}`);
@@ -822,7 +897,6 @@ async function checkScheduledWatering() {
     }
 
     // Cleanup old schedule checks (> 2 menit)
-    const twoMinutesAgo = Date.now() - 120000;
     for (const key in lastScheduleCheck) {
       if (key.includes(dateKey)) continue; // Keep today's
       delete lastScheduleCheck[key];
@@ -841,6 +915,8 @@ async function checkScheduledWatering() {
     }
     
     // Continue running - don't crash worker
+  } finally {
+    lastSchedulerTickAt = Date.now();
   }
 }
 
