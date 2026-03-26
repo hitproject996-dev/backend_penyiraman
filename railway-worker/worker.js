@@ -1159,6 +1159,7 @@ async function logHistory(type, potNumbers, duration) {
 
     await setFirebaseSmart(`history/${dateKey}/${timeKey}`, {
       timestamp: now.getTime(),
+      source: 'server',
       type: type,
       pots: potNumbers,
       duration: duration,
@@ -1185,6 +1186,7 @@ const autoLogJob = new cron.CronJob('*/30 * * * *', async () => {
 
       await setFirebaseSmart(`history/${dateKey}/${timeKey}`, {
         timestamp: now.getTime(),
+        source: 'server',
         type: 'auto_log',
         ...sensorData,
       });
