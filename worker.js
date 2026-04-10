@@ -48,6 +48,9 @@ const FIREBASE_PATHS = {
   history: 'history',
 };
 
+const NOTIFICATION_TOPIC = 'apsgo_notifications';
+const NOTIFICATION_CHANNEL_ID = 'apsgo_watering_channel';
+
 const config = {
   redis: {
     host: process.env.REDIS_HOST || 'localhost',
@@ -120,6 +123,34 @@ try {
 
 const db = admin.database();
 
+async function sendAutomationNotification({ title, body, type, data = {} }) {
+  try {
+    await admin.messaging().send({
+      topic: NOTIFICATION_TOPIC,
+      notification: { title, body },
+      data: {
+        type: String(type || 'automation'),
+        title: String(title || ''),
+        body: String(body || ''),
+        ...Object.fromEntries(
+          Object.entries(data).map(([key, value]) => [key, String(value)]),
+        ),
+      },
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: NOTIFICATION_CHANNEL_ID,
+          icon: 'ic_launcher',
+          color: '#2E7D32',
+        },
+      },
+    });
+    console.log(`🔔 Notification sent: ${type}`);
+  } catch (error) {
+    console.error('❌ Failed to send notification:', error.message);
+  }
+}
+
 // Add error handlers for Firebase database
 db.ref('.info/connected').on('value', (snap) => {
   if (snap.val() === true) {
@@ -171,6 +202,22 @@ const wateringWorker = new Worker(
       console.log('   🔛 Turning ON:', Object.keys(updates).join(', '));
       console.log('   📌 Firebase path: aktuator');
       console.log('   📝 Updates:', JSON.stringify(updates, null, 2));
+
+      if (String(type || '').startsWith('waktu_')) {
+        const scheduleTime = job.data.scheduleTime || 'jadwal';
+        const potText = potNumbers.length > 1 ? `pot ${potNumbers.join(', ')}` : `pot ${potNumbers[0]}`;
+        await sendAutomationNotification({
+          title: 'ApsGo - Jadwal Penyiraman',
+          body: `Pada jam ${scheduleTime} akan dilakukan penyiraman untuk ${potText}.`,
+          type: 'schedule_triggered',
+          data: {
+            scheduleId: scheduleId || '',
+            scheduleTime,
+            pots: potNumbers.join(','),
+            duration: duration,
+          },
+        });
+      }
       
       await updateFirebaseSmart('aktuator', updates);
       console.log(`   🚀 ALL VALVES STARTED SIMULTANEOUSLY: ${Object.keys(updates).filter(k => k.startsWith('mosvet_')).join(', ')}`);
@@ -794,6 +841,7 @@ async function checkScheduledWatering() {
               pompaPupuk: pompaPupuk,
               duration: durasi,
               scheduleId: jobKey,
+              scheduleTime: scheduleWaktu,
             },
             {
               jobId: jobKey,
@@ -841,6 +889,7 @@ async function checkScheduledWatering() {
               pompaPupuk: true,
               duration: kontrolConfig.durasi_1 || 60,
               scheduleId: scheduleKey,
+              scheduleTime: kontrolConfig.waktu_1,
             },
             {
               jobId: scheduleKey,
@@ -881,6 +930,7 @@ async function checkScheduledWatering() {
               pompaPupuk: true,
               duration: kontrolConfig.durasi_2 || 60,
               scheduleId: scheduleKey,
+              scheduleTime: kontrolConfig.waktu_2,
             },
             {
               jobId: scheduleKey,
@@ -1062,6 +1112,20 @@ async function checkSensorThresholds() {
         console.log(`   Mode: ${smartMode ? 'Smart (monitor until ' + batasAtas + '%)' : 'Fixed (' + durasi + 's)'}`);
         console.log(`   Pumps: Air=${pompaAir}, Pupuk=${pompaPupuk}`);
 
+        await sendAutomationNotification({
+          title: 'ApsGo - Penyiraman Otomatis',
+          body: `Penyiraman dilakukan pada ${potsNeedWatering.map((pot) => `pot ${pot}`).join(', ')} karena kelembapan di bawah ambang batas ${batasBawah}%.`,
+          type: 'sensor_triggered',
+          data: {
+            thresholdId: thresholdKey,
+            pots: potsNeedWatering.join(','),
+            batasBawah,
+            batasAtas,
+            durasi,
+            mode: smartMode ? 'smart' : 'fixed',
+          },
+        });
+
         const jobId = `${thresholdKey}-${Date.now()}`;
         await wateringQueue.add(
           thresholdKey,
@@ -1159,6 +1223,7 @@ async function logHistory(type, potNumbers, duration) {
 
     await setFirebaseSmart(`history/${dateKey}/${timeKey}`, {
       timestamp: now.getTime(),
+      source: 'server',
       type: type,
       pots: potNumbers,
       duration: duration,
@@ -1173,8 +1238,8 @@ async function logHistory(type, potNumbers, duration) {
 
 // ==================== PERIODIC HISTORY LOGGING ====================
 
-// Auto-log sensor data setiap 10 menit (independent from watering)
-const autoLogJob = new cron.CronJob('*/10 * * * *', async () => {
+// Auto-log sensor data setiap 30 menit (independent from watering)
+const autoLogJob = new cron.CronJob('*/30 * * * *', async () => {
   try {
     const sensorData = await readFirebaseSmart('data');
 
@@ -1185,6 +1250,7 @@ const autoLogJob = new cron.CronJob('*/10 * * * *', async () => {
 
       await setFirebaseSmart(`history/${dateKey}/${timeKey}`, {
         timestamp: now.getTime(),
+        source: 'server',
         type: 'auto_log',
         ...sensorData,
       });
@@ -1197,7 +1263,7 @@ const autoLogJob = new cron.CronJob('*/10 * * * *', async () => {
 });
 
 autoLogJob.start();
-console.log('✅ Auto history logging started (every 10 minutes)');
+console.log('✅ Auto history logging started (every 30 minutes)');
 
 // ==================== CLEANUP OLD HISTORY (DAILY) ====================
 
@@ -1205,7 +1271,7 @@ const cleanupJob = new cron.CronJob('0 2 * * *', async () => {
   // Run daily at 2 AM
   try {
     console.log('\n🧹 Running history cleanup...');
-    const daysToKeep = 30;
+    const daysToKeep = 10;
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 
@@ -1437,7 +1503,7 @@ console.log('\n✨ ApsGo Railway Worker is running!');
 console.log('📊 Features enabled:');
 console.log('   • Waktu Mode (Time-based scheduling)');
 console.log('   • Sensor Mode (Threshold-based automation)');
-console.log('   • Auto History Logging (every 10 min)');
+console.log('   • Auto History Logging (every 30 min)');
 console.log('   • History Cleanup (daily at 2 AM)');
 console.log('   • Health Check (every 5 min)');
 console.log('\n🎯 Worker is ready to process jobs...\n');
