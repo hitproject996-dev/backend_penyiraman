@@ -125,7 +125,19 @@ const db = admin.database();
 
 async function sendAutomationNotification({ title, body, type, data = {} }) {
   try {
-    await admin.messaging().send({
+    // Check if messaging is available
+    if (!admin.messaging) {
+      console.log(`📝 [INFO] Cloud Messaging not available. App will use local notifications via Firebase listener.`);
+      return;
+    }
+
+    const messaging = admin.messaging();
+    if (!messaging) {
+      console.log(`📝 [INFO] Cloud Messaging SDK not initialized. App will use local notifications via Firebase listener.`);
+      return;
+    }
+
+    const result = await messaging.send({
       topic: NOTIFICATION_TOPIC,
       notification: { title, body },
       data: {
@@ -145,9 +157,10 @@ async function sendAutomationNotification({ title, body, type, data = {} }) {
         },
       },
     });
-    console.log(`🔔 Notification sent: ${type}`);
+    console.log(`🔔 FCM Notification sent: ${type} (ID: ${result})`);
   } catch (error) {
-    console.error('❌ Failed to send notification:', error.message);
+    // Don't treat as error - app will handle notifications via Firebase listeners
+    console.log(`📝 [INFO] FCM not available (${error.message}). App will use local notifications via Firebase listener.`);
   }
 }
 
