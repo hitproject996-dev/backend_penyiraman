@@ -42,7 +42,7 @@ process.env.TZ = process.env.TZ || 'Asia/Jakarta';
 
 // Firebase paths configuration
 const FIREBASE_PATHS = {
-  kontrol: 'kontrol_1',  // Main kontrol path (ubah ke 'kontrol' jika perlu)
+  kontrol: 'kontrol_1',  // Main kontrol path - FIXED: Updated to kontrol_1 (current data structure)
   aktuator: 'aktuator',
   data: 'data',
   history: 'history',
@@ -219,7 +219,37 @@ const wateringWorker = new Worker(
         });
       }
       
-      await updateFirebaseSmart('aktuator', updates);
+      // Update with retry logic (3 attempts)
+      await updateFirebaseSmart('aktuator', updates, 3);
+      
+      // Verify the update was written to Firebase
+      console.log(`   🔍 Verifying Firebase update...`);
+      const verifyAttempts = 3;
+      let verified = false;
+      for (let i = 0; i < verifyAttempts; i++) {
+        try {
+          const currentState = await readFirebaseSmart('aktuator');
+          const allSet = Object.keys(updates).every(key => currentState[key] === updates[key]);
+          
+          if (allSet) {
+            console.log(`   ✅ VERIFIED: All values correctly written to Firebase!`);
+            verified = true;
+            break;
+          } else {
+            console.warn(`   ⚠️  Verification attempt ${i + 1}/${verifyAttempts} failed: values not yet synced`);
+            if (i < verifyAttempts - 1) {
+              await sleep(500); // Wait 500ms before retry
+            }
+          }
+        } catch (verifyError) {
+          console.warn(`   ⚠️  Verification read failed (attempt ${i + 1}/${verifyAttempts}): ${verifyError.message}`);
+        }
+      }
+      
+      if (!verified) {
+        console.warn(`   ⚠️  WARNING: Could not verify Firebase update after ${verifyAttempts} attempts`);
+      }
+      
       console.log(`   🚀 ALL VALVES STARTED SIMULTANEOUSLY: ${Object.keys(updates).filter(k => k.startsWith('mosvet_')).join(', ')}`);
       
       // SMART MODE: Monitor sensor and stop pots TOGETHER when they reach target
@@ -264,8 +294,13 @@ const wateringWorker = new Worker(
                   stopUpdates[`mosvet_${pot + 2}`] = false;
                 }
                 
-                await updateFirebaseSmart('aktuator', stopUpdates);
-                console.log(`   🔴 STOPPED TOGETHER: ${Object.keys(stopUpdates).join(', ')} (Pots: [${potsToStop.join(', ')}])`);
+                try {
+                  await updateFirebaseSmart('aktuator', stopUpdates, 2); // 2 attempts for stop
+                  console.log(`   🔴 STOPPED TOGETHER: ${Object.keys(stopUpdates).join(', ')} (Pots: [${potsToStop.join(', ')}])`);
+                } catch (stopError) {
+                  console.error(`   ❌ FAILED to stop pots: ${stopError.message}`);
+                  throw stopError; // Re-throw to safety handler
+                }
                 
                 // Remove stopped pots from active list
                 activePots = activePots.filter(p => !potsToStop.includes(p));
@@ -289,8 +324,13 @@ const wateringWorker = new Worker(
           for (const pot of activePots) {
             timeoutStops[`mosvet_${pot + 2}`] = false;
           }
-          await updateFirebaseSmart('aktuator', timeoutStops);
-          console.log(`   🔴 Force stopped TOGETHER: ${Object.keys(timeoutStops).join(', ')}`);
+          try {
+            await updateFirebaseSmart('aktuator', timeoutStops, 2); // 2 attempts for force stop
+            console.log(`   🔴 Force stopped TOGETHER: ${Object.keys(timeoutStops).join(', ')}`);
+          } catch (forceStopError) {
+            console.error(`   ❌ FAILED to force stop pots: ${forceStopError.message}`);
+            throw forceStopError;
+          }
         }
         
         // Finally, stop pumps
@@ -298,8 +338,13 @@ const wateringWorker = new Worker(
         if (pompaAir) pumpStop['mosvet_1'] = false;
         if (pompaPupuk) pumpStop['mosvet_2'] = false;
         if (Object.keys(pumpStop).length > 0) {
-          await updateFirebaseSmart('aktuator', pumpStop);
-          console.log('   🔴 Pumps stopped:', Object.keys(pumpStop).join(', '));
+          try {
+            await updateFirebaseSmart('aktuator', pumpStop, 2); // 2 attempts for pump stop
+            console.log('   🔴 Pumps stopped:', Object.keys(pumpStop).join(', '));
+          } catch (pumpStopError) {
+            console.error(`   ❌ FAILED to stop pumps: ${pumpStopError.message}`);
+            throw pumpStopError;
+          }
         }
         console.log('   ✅ Smart mode completed, now logging history...');
         
@@ -322,8 +367,14 @@ const wateringWorker = new Worker(
           offUpdates[key] = false;
         }
         console.log('   🔴 Turning OFF:', Object.keys(offUpdates).join(', '));
-        await updateFirebaseSmart('aktuator', offUpdates);
-        console.log('   ✅ Turn OFF completed, now logging history...');
+        try {
+          await updateFirebaseSmart('aktuator', offUpdates, 2); // 2 attempts for turn off
+          console.log('   ✅ Turn OFF completed successfully');
+        } catch (offError) {
+          console.error(`   ❌ FAILED to turn OFF: ${offError.message}`);
+          throw offError;
+        }
+        console.log('   ✅ Now logging history...');
       }
 
       // Log history
@@ -340,22 +391,27 @@ const wateringWorker = new Worker(
       return { success: true, duration, pots: potNumbers };
     } catch (error) {
       console.error(`   ❌ Job failed:`, error.message);
+      console.error(`   [ERROR DETAILS] Stack:`, error.stack);
 
-      // Safety: Turn OFF everything
+      // Safety: Turn OFF everything with retry
+      const safetyUpdates = {
+        mosvet_1: false,
+        mosvet_2: false,
+        mosvet_3: false,
+        mosvet_4: false,
+        mosvet_5: false,
+        mosvet_6: false,
+        mosvet_7: false,
+        mosvet_8: false, // Pengaduk
+      };
+      
       try {
-        await updateFirebaseSmart('aktuator', {
-          mosvet_1: false,
-          mosvet_2: false,
-          mosvet_3: false,
-          mosvet_4: false,
-          mosvet_5: false,
-          mosvet_6: false,
-          mosvet_7: false,
-          mosvet_8: false, // Pengaduk
-        });
-        console.log('   🛡️ Safety: All aktuators turned OFF');
+        console.log(`   🛡️ Safety: Attempting to turn OFF all aktuators...`);
+        await updateFirebaseSmart('aktuator', safetyUpdates, 2); // 2 attempts for safety
+        console.log('   🛡️ Safety: All aktuators turned OFF successfully');
       } catch (safetyError) {
-        console.error('   ⚠️ Safety OFF failed:', safetyError.message);
+        console.error('   ❌ CRITICAL: Safety OFF failed:', safetyError.message);
+        console.error('   ❌ CRITICAL: Penyiraman mungkin terjebak ON - manual intervention mungkin diperlukan!');
       }
 
       throw error;
@@ -528,43 +584,58 @@ async function updateWithTimeout(ref, updates, timeoutMs = 5000) {
 }
 
 // Smart update: Try SDK first, fallback to REST if timeout
-async function updateFirebaseSmart(path, updates) {
+// WITH RETRY LOGIC for stability
+async function updateFirebaseSmart(path, updates, maxAttempts = 3) {
   const updateStr = JSON.stringify(updates);
-  console.log(`   [UPDATE START] Path: ${path}, Data: ${updateStr}`);
+  console.log(`   [UPDATE START] Path: /${path}, Data: ${updateStr}`);
+  console.log(`   [UPDATE] Max attempts: ${maxAttempts}`);
   
-  // If SDK is consistently failing, skip it for updates too
-  const shouldSkipSDK = consecutiveFirebaseErrors >= SKIP_SDK_THRESHOLD;
+  let lastError = null;
   
-  if (shouldSkipSDK) {
-    console.log(`   [UPDATE] Using REST API directly (SDK disabled)`);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      await updateFirebaseViaREST(path, updates);
-      console.log(`   ✅ [UPDATE] REST API successful!`);
+      // If SDK is consistently failing, skip it for updates too
+      const shouldSkipSDK = consecutiveFirebaseErrors >= SKIP_SDK_THRESHOLD;
+      
+      if (shouldSkipSDK) {
+        console.log(`   [UPDATE Attempt ${attempt}/${maxAttempts}] Using REST API directly (SDK disabled)`);
+        await updateFirebaseViaREST(path, updates);
+        console.log(`   ✅ [UPDATE] REST API successful on attempt ${attempt}!`);
+        return true;
+      }
+      
+      // Normal flow: Try SDK first
+      console.log(`   [UPDATE Attempt ${attempt}/${maxAttempts}] Attempting SDK update...`);
+      await updateWithTimeout(db.ref(path), updates, 5000);
+      console.log(`   ✅ [UPDATE] SDK update successful on attempt ${attempt}!`);
       return true;
-    } catch (restError) {
-      console.error(`   ❌ [UPDATE] REST failed: ${restError.message}`);
-      throw new Error('REST update failed');
+    } catch (sdkError) {
+      lastError = sdkError;
+      console.warn(`   ⚠️  [UPDATE Attempt ${attempt}/${maxAttempts}] SDK failed: ${sdkError.message}`);
+      
+      // Try REST API as fallback
+      try {
+        console.log(`   [UPDATE Attempt ${attempt}/${maxAttempts}] Fallback to REST API...`);
+        await updateFirebaseViaREST(path, updates);
+        console.log(`   ✅ [UPDATE] REST API successful on attempt ${attempt}!`);
+        return true;
+      } catch (restError) {
+        lastError = restError;
+        console.error(`   ❌ [UPDATE Attempt ${attempt}/${maxAttempts}] REST failed: ${restError.message}`);
+        
+        if (attempt < maxAttempts) {
+          const delayMs = attempt * 1000; // 1s, 2s, 3s delay between attempts
+          console.log(`   ⏳ [UPDATE] Retrying after ${delayMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
     }
   }
   
-  try {
-    console.log(`   [UPDATE] Step 1: Attempting SDK update...`);
-    await updateWithTimeout(db.ref(path), updates, 5000);
-    console.log(`   ✅ [UPDATE] Step 2: SDK update successful!`);
-    return true;
-  } catch (sdkError) {
-    console.warn(`   ⚠️  [UPDATE] Step 2: SDK failed (${sdkError.message}), trying REST API...`);
-    
-    try {
-      console.log(`   [UPDATE] Step 3: Attempting REST API...`);
-      await updateFirebaseViaREST(path, updates);
-      console.log(`   ✅ [UPDATE] Step 4: REST API successful!`);
-      return true;
-    } catch (restError) {
-      console.error(`   ❌ [UPDATE] Step 4: REST failed (${restError.message}) - BOTH METHODS FAILED!`);
-      throw new Error('Both SDK and REST update failed');
-    }
-  }
+  // All attempts failed
+  console.error(`   ❌ [UPDATE] ALL ${maxAttempts} ATTEMPTS FAILED!`);
+  console.error(`   ❌ [UPDATE] Last error: ${lastError.message}`);
+  throw new Error(`Firebase update failed after ${maxAttempts} attempts: ${lastError.message}`);
 }
 
 // Helper: Set Firebase via REST API (PUT for overwrite)
@@ -712,6 +783,11 @@ async function checkScheduledWatering() {
     
     console.log(`   [DEBUG] Kontrol config received:`, kontrolConfig ? 'EXISTS' : 'NULL');
     
+    if (!kontrolConfig) {
+      console.warn('   ⚠️  Kontrol config is NULL - schedule check aborted');
+      return;
+    }
+    
     if (kontrolConfig) {
       console.log(`   [DEBUG] Kontrol data:`, JSON.stringify(kontrolConfig, null, 2));
     }
@@ -736,6 +812,10 @@ async function checkScheduledWatering() {
     
     // Detect all schedules (jadwal_1, jadwal_2, jadwal_3, ...)
     const allSchedules = kontrolConfig ? Object.keys(kontrolConfig).filter(key => key.startsWith('jadwal_')) : [];
+    
+    if (allSchedules.length === 0) {
+      console.warn('   ⚠️  No jadwal found in kontrol config! Check Firebase structure.');
+    }
     
     // Log detail setiap 3 menit ATAU jika menit habis dibagi 5
     if (checkCounter % 3 === 0 || now.getMinutes() % 5 === 0) {
@@ -1565,4 +1645,3 @@ setInterval(() => {
     showCurrentTime();
   }
 }, 30000);
-

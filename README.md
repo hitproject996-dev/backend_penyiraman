@@ -6,11 +6,11 @@ Background worker service untuk sistem otomasi IoT ApsGo. Service ini berjalan 2
 
 - ✅ **Waktu Mode**: Penjadwalan berdasarkan waktu (cron-based)
 - ✅ **Sensor Mode**: Otomasi berdasarkan threshold kelembapan tanah
-- ✅ **Auto History Logging**: Record data sensor setiap 10 menit
+- ✅ **Auto History Logging**: Record data sensor setiap 30 menit
 - ✅ **Redis Queue**: Prevent race conditions dan manage concurrent tasks
 - ✅ **Graceful Shutdown**: Clean shutdown dengan safety turn-off semua aktuator
 - ✅ **Health Monitoring**: Auto health check setiap 5 menit
-- ✅ **Auto Cleanup**: Hapus history lama otomatis (retain 30 hari)
+- ✅ **Auto Cleanup**: Hapus history lama otomatis (retain 10 hari)
 
 ## Tech Stack
 
@@ -124,7 +124,7 @@ await queue.obliterate();
 
 ### Database Cleanup
 
-History otomatis di-cleanup setiap hari jam 2 pagi, hanya retain 30 hari terakhir.
+History otomatis di-cleanup setiap hari jam 2 pagi, hanya retain 10 hari terakhir.
 
 ## Troubleshooting
 
