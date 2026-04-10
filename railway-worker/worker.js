@@ -42,11 +42,14 @@ process.env.TZ = process.env.TZ || 'Asia/Jakarta';
 
 // Firebase paths configuration
 const FIREBASE_PATHS = {
-  kontrol: 'kontrol_1',  // Main kontrol path (ubah ke 'kontrol' jika perlu)
+  kontrol: 'kontrol',  // Main kontrol path - FIXED: changed from 'kontrol_1' to 'kontrol'
   aktuator: 'aktuator',
   data: 'data',
   history: 'history',
 };
+
+const NOTIFICATION_TOPIC = 'apsgo_notifications';
+const NOTIFICATION_CHANNEL_ID = 'apsgo_watering_channel';
 
 const config = {
   redis: {
@@ -120,6 +123,34 @@ try {
 
 const db = admin.database();
 
+async function sendAutomationNotification({ title, body, type, data = {} }) {
+  try {
+    await admin.messaging().send({
+      topic: NOTIFICATION_TOPIC,
+      notification: { title, body },
+      data: {
+        type: String(type || 'automation'),
+        title: String(title || ''),
+        body: String(body || ''),
+        ...Object.fromEntries(
+          Object.entries(data).map(([key, value]) => [key, String(value)]),
+        ),
+      },
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: NOTIFICATION_CHANNEL_ID,
+          icon: 'ic_launcher',
+          color: '#2E7D32',
+        },
+      },
+    });
+    console.log(`🔔 Notification sent: ${type}`);
+  } catch (error) {
+    console.error('❌ Failed to send notification:', error.message);
+  }
+}
+
 // Add error handlers for Firebase database
 db.ref('.info/connected').on('value', (snap) => {
   if (snap.val() === true) {
@@ -171,6 +202,22 @@ const wateringWorker = new Worker(
       console.log('   🔛 Turning ON:', Object.keys(updates).join(', '));
       console.log('   📌 Firebase path: aktuator');
       console.log('   📝 Updates:', JSON.stringify(updates, null, 2));
+
+      if (String(type || '').startsWith('waktu_')) {
+        const scheduleTime = job.data.scheduleTime || 'jadwal';
+        const potText = potNumbers.length > 1 ? `pot ${potNumbers.join(', ')}` : `pot ${potNumbers[0]}`;
+        await sendAutomationNotification({
+          title: 'ApsGo - Jadwal Penyiraman',
+          body: `Pada jam ${scheduleTime} akan dilakukan penyiraman untuk ${potText}.`,
+          type: 'schedule_triggered',
+          data: {
+            scheduleId: scheduleId || '',
+            scheduleTime,
+            pots: potNumbers.join(','),
+            duration: duration,
+          },
+        });
+      }
       
       await updateFirebaseSmart('aktuator', updates);
       console.log(`   🚀 ALL VALVES STARTED SIMULTANEOUSLY: ${Object.keys(updates).filter(k => k.startsWith('mosvet_')).join(', ')}`);
@@ -794,6 +841,7 @@ async function checkScheduledWatering() {
               pompaPupuk: pompaPupuk,
               duration: durasi,
               scheduleId: jobKey,
+              scheduleTime: scheduleWaktu,
             },
             {
               jobId: jobKey,
@@ -841,6 +889,7 @@ async function checkScheduledWatering() {
               pompaPupuk: true,
               duration: kontrolConfig.durasi_1 || 60,
               scheduleId: scheduleKey,
+              scheduleTime: kontrolConfig.waktu_1,
             },
             {
               jobId: scheduleKey,
@@ -881,6 +930,7 @@ async function checkScheduledWatering() {
               pompaPupuk: true,
               duration: kontrolConfig.durasi_2 || 60,
               scheduleId: scheduleKey,
+              scheduleTime: kontrolConfig.waktu_2,
             },
             {
               jobId: scheduleKey,
@@ -1061,6 +1111,20 @@ async function checkSensorThresholds() {
         potDetails.forEach(p => console.log(`   - POT ${p.pot}: ${p.value}% < ${batasBawah}%`));
         console.log(`   Mode: ${smartMode ? 'Smart (monitor until ' + batasAtas + '%)' : 'Fixed (' + durasi + 's)'}`);
         console.log(`   Pumps: Air=${pompaAir}, Pupuk=${pompaPupuk}`);
+
+        await sendAutomationNotification({
+          title: 'ApsGo - Penyiraman Otomatis',
+          body: `Penyiraman dilakukan pada ${potsNeedWatering.map((pot) => `pot ${pot}`).join(', ')} karena kelembapan di bawah ambang batas ${batasBawah}%.`,
+          type: 'sensor_triggered',
+          data: {
+            thresholdId: thresholdKey,
+            pots: potsNeedWatering.join(','),
+            batasBawah,
+            batasAtas,
+            durasi,
+            mode: smartMode ? 'smart' : 'fixed',
+          },
+        });
 
         const jobId = `${thresholdKey}-${Date.now()}`;
         await wateringQueue.add(
