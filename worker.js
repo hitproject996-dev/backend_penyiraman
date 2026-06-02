@@ -365,40 +365,30 @@ const wateringWorker = new Worker(
           totalWateringTime += duration;
         }
 
-        // Turn OFF current pot valve (keep pumps ON for next pot if exists)
+        // Turn OFF current pot valve AND pumps TOGETHER (atomic operation)
+        // This prevents pressure issues in the hose
         const offUpdates = {};
         if (pot >= 1 && pot <= 5) {
           offUpdates[`mosvet_${pot + 2}`] = false; // pot 1 → mosvet_3, etc.
         }
+        
+        // Always turn OFF pumps with the pot (atomic OFF)
+        if (pompaAir) offUpdates['mosvet_1'] = false;
+        if (pompaPupuk) offUpdates['mosvet_2'] = false;
 
-        console.log(`   🔴 Turn OFF POT ${pot} valve: ${Object.keys(offUpdates).join(', ')}`);
+        console.log(`   🔴 Turn OFF POT + PUMPS TOGETHER (atomic): ${Object.keys(offUpdates).join(', ')}`);
         try {
           await updateFirebaseSmart('aktuator', offUpdates, 2);
-          console.log(`   ✅ POT ${pot} valve OFF confirmed`);
+          console.log(`   ✅ POT and pumps OFF confirmed (atomic)`);
         } catch (offError) {
-          console.error(`   ❌ FAILED to turn OFF POT ${pot}: ${offError.message}`);
+          console.error(`   ❌ FAILED to turn OFF: ${offError.message}`);
           throw offError;
         }
 
         // Break 30 detik sebelum pot berikutnya (jika ada)
         if (potIndex < potCount - 1) {
-          console.log(`   ⏳ Waiting 2 seconds to stabilize...`);
-          await sleep(2000); // 2 second stabilization after pot OFF
-          
-          // IMPORTANT: Turn OFF pumps during break (no pot is ON, so no need for pumps)
-          const breakPumpStop = {};
-          if (pompaAir) breakPumpStop['mosvet_1'] = false;
-          if (pompaPupuk) breakPumpStop['mosvet_2'] = false;
-          
-          if (Object.keys(breakPumpStop).length > 0) {
-            console.log(`   🔴 Turn OFF pumps during BREAK: ${Object.keys(breakPumpStop).join(', ')}`);
-            try {
-              await updateFirebaseSmart('aktuator', breakPumpStop, 2);
-              console.log(`   ✅ Pumps OFF confirmed`);
-            } catch (pumpError) {
-              console.warn(`   ⚠️  Failed to turn OFF pumps during break: ${pumpError.message}`);
-            }
-          }
+          console.log(`   ⏳ Waiting 2 seconds to stabilize (everything OFF)...`);
+          await sleep(2000); // 2 second stabilization after everything OFF
           
           console.log(`\n   ⏸️  BREAK 30 DETIK sebelum POT ${potNumbers[potIndex + 1]}...`);
           for (let breakTime = 30; breakTime > 0; breakTime--) {
