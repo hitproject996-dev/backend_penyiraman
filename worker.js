@@ -384,6 +384,22 @@ const wateringWorker = new Worker(
         if (potIndex < potCount - 1) {
           console.log(`   ⏳ Waiting 2 seconds to stabilize...`);
           await sleep(2000); // 2 second stabilization after pot OFF
+          
+          // IMPORTANT: Turn OFF pumps during break (no pot is ON, so no need for pumps)
+          const breakPumpStop = {};
+          if (pompaAir) breakPumpStop['mosvet_1'] = false;
+          if (pompaPupuk) breakPumpStop['mosvet_2'] = false;
+          
+          if (Object.keys(breakPumpStop).length > 0) {
+            console.log(`   🔴 Turn OFF pumps during BREAK: ${Object.keys(breakPumpStop).join(', ')}`);
+            try {
+              await updateFirebaseSmart('aktuator', breakPumpStop, 2);
+              console.log(`   ✅ Pumps OFF confirmed`);
+            } catch (pumpError) {
+              console.warn(`   ⚠️  Failed to turn OFF pumps during break: ${pumpError.message}`);
+            }
+          }
+          
           console.log(`\n   ⏸️  BREAK 30 DETIK sebelum POT ${potNumbers[potIndex + 1]}...`);
           for (let breakTime = 30; breakTime > 0; breakTime--) {
             if (breakTime % 10 === 0 || breakTime <= 5) {
