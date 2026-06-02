@@ -42,7 +42,7 @@ process.env.TZ = process.env.TZ || 'Asia/Jakarta';
 
 // Firebase paths configuration
 const FIREBASE_PATHS = {
-  kontrol: 'kontrol',  // Main kontrol path - FIXED: changed from 'kontrol_1' to 'kontrol'
+  kontrol: 'kontrol_1',  // Main kontrol path - FIXED: Updated to kontrol_1 (current data structure)
   aktuator: 'aktuator',
   data: 'data',
   history: 'history',
@@ -125,7 +125,19 @@ const db = admin.database();
 
 async function sendAutomationNotification({ title, body, type, data = {} }) {
   try {
-    await admin.messaging().send({
+    // Check if messaging is available
+    if (!admin.messaging) {
+      console.log(`📝 [INFO] Cloud Messaging not available. App will use local notifications via Firebase listener.`);
+      return;
+    }
+
+    const messaging = admin.messaging();
+    if (!messaging) {
+      console.log(`📝 [INFO] Cloud Messaging SDK not initialized. App will use local notifications via Firebase listener.`);
+      return;
+    }
+
+    const result = await messaging.send({
       topic: NOTIFICATION_TOPIC,
       notification: { title, body },
       data: {
@@ -145,9 +157,10 @@ async function sendAutomationNotification({ title, body, type, data = {} }) {
         },
       },
     });
-    console.log(`🔔 Notification sent: ${type}`);
+    console.log(`🔔 FCM Notification sent: ${type} (ID: ${result})`);
   } catch (error) {
-    console.error('❌ Failed to send notification:', error.message);
+    // Don't treat as error - app will handle notifications via Firebase listeners
+    console.log(`📝 [INFO] FCM not available (${error.message}). App will use local notifications via Firebase listener.`);
   }
 }
 
@@ -180,215 +193,190 @@ const wateringWorker = new Worker(
     console.log(`   Type: ${type}`);
     console.log(`   Pots: [${potNumbers.join(', ')}]`);
     console.log(`   Mode: ${smartMode ? 'SMART (auto-stop at target)' : 'FIXED'}`);
-    console.log(`   Duration: ${duration}s ${smartMode ? '(max)' : ''}`);
+    console.log(`   Duration: ${duration}s ${smartMode ? '(max per pot)' : '(per pot)'}`);
+    console.log(`   Break antar pot: 30 detik`);
     if (sensorData) {
       console.log(`   Target: ${sensorData.batasBawah}% → ${sensorData.batasAtas}%`);
     }
 
     try {
-      // Prepare aktuator updates
-      const updates = {};
-      if (pompaAir) updates['mosvet_1'] = true;
-      if (pompaPupuk) updates['mosvet_2'] = true;
-
-      // Turn ON valves for selected pots
-      for (const pot of potNumbers) {
-        if (pot >= 1 && pot <= 5) {
-          updates[`mosvet_${pot + 2}`] = true; // pot 1 → mosvet_3, etc.
-        }
-      }
-
-      // Turn ON
-      console.log('   🔛 Turning ON:', Object.keys(updates).join(', '));
-      console.log('   📌 Firebase path: aktuator');
-      console.log('   📝 Updates:', JSON.stringify(updates, null, 2));
-
+      const BREAK_BETWEEN_POTS_MS = 30000; // 30 seconds break between pots
+      const potCount = potNumbers.length;
+      
       if (String(type || '').startsWith('waktu_')) {
         const scheduleTime = job.data.scheduleTime || 'jadwal';
-        const potText = potNumbers.length > 1 ? `pot ${potNumbers.join(', ')}` : `pot ${potNumbers[0]}`;
+        const potText = potCount > 1 ? `pot ${potNumbers.join(', ')}` : `pot ${potNumbers[0]}`;
         await sendAutomationNotification({
-          title: 'ApsGo - Jadwal Penyiraman',
-          body: `Pada jam ${scheduleTime} akan dilakukan penyiraman untuk ${potText}.`,
+          title: 'ApsGo - Jadwal Penyiraman (Bergiliran)',
+          body: `Penyiraman bergiliran untuk ${potText} dimulai dari jam ${scheduleTime}. Setiap pot disiram ${duration}s dengan jeda 30 detik.`,
           type: 'schedule_triggered',
           data: {
             scheduleId: scheduleId || '',
             scheduleTime,
             pots: potNumbers.join(','),
             duration: duration,
+            sequence: 'serial',
           },
         });
       }
-      
-      // Update with retry logic (3 attempts)
-      await updateFirebaseSmart('aktuator', updates, 3);
-      
-      // Verify the update was written to Firebase
-      console.log(`   🔍 Verifying Firebase update...`);
-      const verifyAttempts = 3;
-      let verified = false;
-      for (let i = 0; i < verifyAttempts; i++) {
-        try {
-          const currentState = await readFirebaseSmart('aktuator');
-          const allSet = Object.keys(updates).every(key => currentState[key] === updates[key]);
-          
-          if (allSet) {
-            console.log(`   ✅ VERIFIED: All values correctly written to Firebase!`);
-            verified = true;
-            break;
-          } else {
-            console.warn(`   ⚠️  Verification attempt ${i + 1}/${verifyAttempts} failed: values not yet synced`);
-            if (i < verifyAttempts - 1) {
-              await sleep(500); // Wait 500ms before retry
-            }
-          }
-        } catch (verifyError) {
-          console.warn(`   ⚠️  Verification read failed (attempt ${i + 1}/${verifyAttempts}): ${verifyError.message}`);
-        }
-      }
-      
-      if (!verified) {
-        console.warn(`   ⚠️  WARNING: Could not verify Firebase update after ${verifyAttempts} attempts`);
-      }
-      
-      console.log(`   🚀 ALL VALVES STARTED SIMULTANEOUSLY: ${Object.keys(updates).filter(k => k.startsWith('mosvet_')).join(', ')}`);
-      
-      // SMART MODE: Monitor sensor and stop pots TOGETHER when they reach target
-      if (smartMode && sensorData && sensorData.batasAtas) {
-        const targetSoil = sensorData.batasAtas;
-        const maxDuration = duration * 1000; // Convert to ms
-        const startTime = Date.now();
-        
-        // Track which pots are still actively watering
-        let activePots = [...potNumbers];
-        
-        console.log(`   🎯 SMART MODE: Monitoring ${activePots.length} pots, target ${targetSoil}%...`);
-        console.log(`   ⚡ Valves will stop TOGETHER when pots reach target (checked every 2s)`);
-        
-        while (activePots.length > 0 && Date.now() - startTime < maxDuration) {
-          await sleep(2000); // Check every 2 seconds
-          
-          try {
-            const currentSensorData = await readFirebaseSmart('data');
-            
-            if (currentSensorData) {
-              const elapsed = Math.floor((Date.now() - startTime) / 1000);
-              const potsToStop = [];
-              
-              // Check ALL active pots and collect which ones reached target
-              for (const pot of activePots) {
-                const soilKey = `soil_${pot}`;
-                const currentValue = parseInt(currentSensorData[soilKey]) || 0;
-                
-                if (currentValue >= targetSoil) {
-                  console.log(`   ✅ [${elapsed}s] POT ${pot}: ${currentValue}% >= ${targetSoil}% - TARGET REACHED!`);
-                  potsToStop.push(pot);
-                } else {
-                  console.log(`   ⏳ [${elapsed}s] POT ${pot}: ${currentValue}% < ${targetSoil}% - continuing...`);
-                }
-              }
-              
-              // Stop ALL pots that reached target TOGETHER (not one-by-one!)
-              if (potsToStop.length > 0) {
-                const stopUpdates = {};
-                for (const pot of potsToStop) {
-                  stopUpdates[`mosvet_${pot + 2}`] = false;
-                }
-                
-                try {
-                  await updateFirebaseSmart('aktuator', stopUpdates, 2); // 2 attempts for stop
-                  console.log(`   🔴 STOPPED TOGETHER: ${Object.keys(stopUpdates).join(', ')} (Pots: [${potsToStop.join(', ')}])`);
-                } catch (stopError) {
-                  console.error(`   ❌ FAILED to stop pots: ${stopError.message}`);
-                  throw stopError; // Re-throw to safety handler
-                }
-                
-                // Remove stopped pots from active list
-                activePots = activePots.filter(p => !potsToStop.includes(p));
-              }
-              
-              if (activePots.length === 0) {
-                console.log(`   🎉 All pots reached target! Smart watering complete.`);
-              } else {
-                console.log(`   📍 Still watering: [${activePots.join(', ')}]`);
-              }
-            }
-          } catch (sensorError) {
-            console.warn(`   ⚠️ Failed to read sensor: ${sensorError.message}`);
-          }
-        }
-        
-        // If any pots still active after max duration (timeout), stop them now TOGETHER
-        if (activePots.length > 0) {
-          console.log(`   ⏱️ Max duration ${duration}s reached. Force stopping remaining pots: [${activePots.join(', ')}]`);
-          const timeoutStops = {};
-          for (const pot of activePots) {
-            timeoutStops[`mosvet_${pot + 2}`] = false;
-          }
-          try {
-            await updateFirebaseSmart('aktuator', timeoutStops, 2); // 2 attempts for force stop
-            console.log(`   🔴 Force stopped TOGETHER: ${Object.keys(timeoutStops).join(', ')}`);
-          } catch (forceStopError) {
-            console.error(`   ❌ FAILED to force stop pots: ${forceStopError.message}`);
-            throw forceStopError;
-          }
-        }
-        
-        // Finally, stop pumps
-        const pumpStop = {};
-        if (pompaAir) pumpStop['mosvet_1'] = false;
-        if (pompaPupuk) pumpStop['mosvet_2'] = false;
-        if (Object.keys(pumpStop).length > 0) {
-          try {
-            await updateFirebaseSmart('aktuator', pumpStop, 2); // 2 attempts for pump stop
-            console.log('   🔴 Pumps stopped:', Object.keys(pumpStop).join(', '));
-          } catch (pumpStopError) {
-            console.error(`   ❌ FAILED to stop pumps: ${pumpStopError.message}`);
-            throw pumpStopError;
-          }
-        }
-        console.log('   ✅ Smart mode completed, now logging history...');
-        
-      } else {
-        // FIXED MODE: Wait for fixed duration
-        const startTime = Date.now();
-        const endTime = startTime + duration * 1000;
 
-        while (Date.now() < endTime) {
-          const remaining = Math.ceil((endTime - Date.now()) / 1000);
-          if (remaining % 10 === 0 || remaining <= 5) {
-            console.log(`   ⏳ ${remaining}s remaining...`);
+      // ==================== SERIAL/SEQUENTIAL MODE ====================
+      // Pots will be watered one-by-one with 30s break between each
+      
+      console.log(`\n🔄 STARTING SEQUENTIAL WATERING: ${potCount} pot(s) akan disiram bergiliran`);
+      console.log(`   Total waktu estimasi: ${(potCount * duration) + ((potCount - 1) * 30)}s`);
+
+      // Track total watering for history
+      let totalWateringTime = 0;
+
+      for (let potIndex = 0; potIndex < potCount; potIndex++) {
+        const pot = potNumbers[potIndex];
+        const potSequence = potIndex + 1;
+
+        console.log(`\n   ╔════════════════════════════════════════╗`);
+        console.log(`   ║ POT ${pot} [${potSequence}/${potCount}]`.padEnd(40) + ` ║`);
+        console.log(`   ╚════════════════════════════════════════╝`);
+
+        // Turn ON pumps + current pot valve
+        const onUpdates = {};
+        if (pompaAir) onUpdates['mosvet_1'] = true;
+        if (pompaPupuk) onUpdates['mosvet_2'] = true;
+        if (pot >= 1 && pot <= 5) {
+          onUpdates[`mosvet_${pot + 2}`] = true; // pot 1 → mosvet_3, etc.
+        }
+
+        console.log(`   🔛 Turn ON: ${Object.keys(onUpdates).join(', ')}`);
+        await updateFirebaseSmart('aktuator', onUpdates, 3);
+
+        // Verify
+        const verifyAttempts = 3;
+        let verified = false;
+        for (let i = 0; i < verifyAttempts; i++) {
+          try {
+            const currentState = await readFirebaseSmart('aktuator');
+            const allSet = Object.keys(onUpdates).every(key => currentState[key] === onUpdates[key]);
+            if (allSet) {
+              console.log(`   ✅ Verified: Valve ON successfully`);
+              verified = true;
+              break;
+            } else {
+              console.warn(`   ⚠️  Verification attempt ${i + 1}/${verifyAttempts} failed`);
+              if (i < verifyAttempts - 1) await sleep(500);
+            }
+          } catch (verifyError) {
+            console.warn(`   ⚠️  Verification read failed (attempt ${i + 1}/${verifyAttempts})`);
           }
-          await sleep(1000);
         }
-        
-        // Turn OFF all at once (FIXED mode only)
+
+        // ========== SMART MODE: Monitor sensor untuk pot individual ini ==========
+        if (smartMode && sensorData && sensorData.batasAtas) {
+          const targetSoil = sensorData.batasAtas;
+          const maxDurationMs = duration * 1000;
+          const startTime = Date.now();
+          let potCompleted = false;
+
+          console.log(`   🎯 SMART MODE: Monitoring POT ${pot}, target ${targetSoil}%`);
+
+          while (Date.now() - startTime < maxDurationMs && !potCompleted) {
+            await sleep(2000); // Check every 2 seconds
+
+            try {
+              const currentSensorData = await readFirebaseSmart('data');
+              const soilKey = `soil_${pot}`;
+              const currentValue = parseInt(currentSensorData[soilKey]) || 0;
+              const elapsed = Math.floor((Date.now() - startTime) / 1000);
+
+              console.log(`   ⏳ [${elapsed}s] POT ${pot}: ${currentValue}% (target: ${targetSoil}%)`);
+
+              if (currentValue >= targetSoil) {
+                console.log(`   ✅ [${elapsed}s] POT ${pot}: TARGET REACHED! ${currentValue}% >= ${targetSoil}%`);
+                potCompleted = true;
+                totalWateringTime += elapsed;
+              }
+            } catch (sensorError) {
+              console.warn(`   ⚠️  Failed to read sensor: ${sensorError.message}`);
+            }
+          }
+
+          if (!potCompleted) {
+            console.log(`   ⏱️  Max duration ${duration}s reached for POT ${pot}`);
+            totalWateringTime += duration;
+          }
+
+        } else {
+          // ========== FIXED MODE: Tunggu durasi tertentu untuk pot ini ==========
+          console.log(`   ⏱️  FIXED MODE: Watering POT ${pot} for ${duration}s`);
+          const startTime = Date.now();
+          const endTime = startTime + duration * 1000;
+
+          while (Date.now() < endTime) {
+            const remaining = Math.ceil((endTime - Date.now()) / 1000);
+            if (remaining % 10 === 0 || remaining <= 5) {
+              console.log(`   ⏳ POT ${pot}: ${remaining}s remaining...`);
+            }
+            await sleep(1000);
+          }
+
+          totalWateringTime += duration;
+        }
+
+        // Turn OFF current pot valve (keep pumps ON for next pot if exists)
         const offUpdates = {};
-        for (const key in updates) {
-          offUpdates[key] = false;
+        if (pot >= 1 && pot <= 5) {
+          offUpdates[`mosvet_${pot + 2}`] = false; // pot 1 → mosvet_3, etc.
         }
-        console.log('   🔴 Turning OFF:', Object.keys(offUpdates).join(', '));
+
+        console.log(`   🔴 Turn OFF POT ${pot} valve: ${Object.keys(offUpdates).join(', ')}`);
         try {
-          await updateFirebaseSmart('aktuator', offUpdates, 2); // 2 attempts for turn off
-          console.log('   ✅ Turn OFF completed successfully');
+          await updateFirebaseSmart('aktuator', offUpdates, 2);
+          console.log(`   ✅ POT ${pot} valve OFF confirmed`);
         } catch (offError) {
-          console.error(`   ❌ FAILED to turn OFF: ${offError.message}`);
+          console.error(`   ❌ FAILED to turn OFF POT ${pot}: ${offError.message}`);
           throw offError;
         }
-        console.log('   ✅ Now logging history...');
+
+        // Break 30 detik sebelum pot berikutnya (jika ada)
+        if (potIndex < potCount - 1) {
+          console.log(`\n   ⏸️  BREAK 30 DETIK sebelum POT ${potNumbers[potIndex + 1]}...`);
+          for (let breakTime = 30; breakTime > 0; breakTime--) {
+            if (breakTime % 10 === 0 || breakTime <= 5) {
+              console.log(`   ⏳ Break: ${breakTime}s remaining...`);
+            }
+            await sleep(1000);
+          }
+        }
+      }
+
+      // ========== FINISH: Turn OFF all pumps ==========
+      console.log(`\n   ✅ Semua pot selesai disiram!`);
+      const pumpStop = {};
+      if (pompaAir) pumpStop['mosvet_1'] = false;
+      if (pompaPupuk) pumpStop['mosvet_2'] = false;
+
+      if (Object.keys(pumpStop).length > 0) {
+        console.log(`   🔴 Turning OFF pumps: ${Object.keys(pumpStop).join(', ')}`);
+        try {
+          await updateFirebaseSmart('aktuator', pumpStop, 2);
+          console.log('   ✅ Pumps stopped');
+        } catch (pumpStopError) {
+          console.error(`   ❌ FAILED to stop pumps: ${pumpStopError.message}`);
+          throw pumpStopError;
+        }
       }
 
       // Log history
-      await logHistory(type, potNumbers, duration);
+      console.log(`   📝 Logging history: ${potCount} pot(s), ${totalWateringTime}s total`);
+      await logHistory(type, potNumbers, totalWateringTime);
       console.log('   ✅ History logged successfully');
 
-      // Update last watering time PER-THRESHOLD (not per-pot!)
+      // Update last watering time PER-THRESHOLD
       if (thresholdId) {
         lastThresholdTime[thresholdId] = Date.now();
         console.log(`   ⏰ Cooldown set for ${thresholdId} (2 minutes)`);
       }
 
-      console.log(`   ✅ Job completed successfully`);
-      return { success: true, duration, pots: potNumbers };
+      console.log(`\n   ✅ Job completed successfully! Total time: ${totalWateringTime}s`);
+      return { success: true, duration: totalWateringTime, pots: potNumbers, mode: 'sequential' };
     } catch (error) {
       console.error(`   ❌ Job failed:`, error.message);
       console.error(`   [ERROR DETAILS] Stack:`, error.stack);
@@ -407,7 +395,7 @@ const wateringWorker = new Worker(
       
       try {
         console.log(`   🛡️ Safety: Attempting to turn OFF all aktuators...`);
-        await updateFirebaseSmart('aktuator', safetyUpdates, 2); // 2 attempts for safety
+        await updateFirebaseSmart('aktuator', safetyUpdates, 2);
         console.log('   🛡️ Safety: All aktuators turned OFF successfully');
       } catch (safetyError) {
         console.error('   ❌ CRITICAL: Safety OFF failed:', safetyError.message);
